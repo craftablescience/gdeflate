@@ -18,6 +18,9 @@
 
 #pragma once
 
+#include <optional>
+#include <vector>
+
 #include "GDeflateConfig.h"
 
 namespace GDeflate
@@ -43,5 +46,7 @@ bool Compress(
     uint32_t flags);
 
 bool Decompress(uint8_t* output, size_t outputSize, const uint8_t* in, size_t inSize, uint32_t numWorkers);
+
+std::optional<std::vector<uint8_t>> Decompress(const uint8_t* in, size_t inSize, uint32_t numWorkers);
 
 } // namespace GDeflate

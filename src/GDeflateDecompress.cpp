@@ -160,4 +160,22 @@ bool Decompress(uint8_t* output, size_t outputSize, const uint8_t* in, size_t in
     return true;
 }
 
+std::optional<std::vector<uint8_t>> Decompress(const uint8_t* in, size_t inSize, uint32_t numWorkers)
+{
+  if (nullptr == in || 0 == inSize)
+    return std::nullopt;
+
+  auto header = reinterpret_cast<const TileStream*>(in);
+  if (!ValidateStream(header))
+    return std::nullopt;
+
+  std::vector<uint8_t> out;
+  out.resize(header->GetUncompressedSize());
+
+  if (!Decompress(out.data(), out.size(), in, inSize, numWorkers)) {
+    return std::nullopt;
+  }
+  return out;
+}
+
 } // namespace GDeflate
