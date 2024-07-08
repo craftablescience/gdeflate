@@ -115,15 +115,8 @@ bool Decompress(uint8_t* output, size_t outputSize, const uint8_t* in, size_t in
     if (!ValidateStream(header))
         return false;
 
-    std::thread workers[kMaxWorkers];
-
     // Run a tile per thread
-    header = reinterpret_cast<const TileStream*>(in);
-
-    if (!ValidateStream(header))
-    {
-        return false;
-    }
+    std::thread workers[kMaxWorkers];
 
     DecompressionContext context{};
 

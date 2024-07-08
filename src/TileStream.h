@@ -62,7 +62,7 @@ struct TileStream
 
     [[nodiscard]] size_t GetUncompressedSize() const
     {
-        return numTiles * kDefaultTileSize - (lastTileSize == 0 ? 0 : kDefaultTileSize - lastTileSize);
+        return (numTiles > 0 ? numTiles : 1) * kDefaultTileSize - (lastTileSize == 0 ? 0 : kDefaultTileSize - lastTileSize);
     }
 
 private:
