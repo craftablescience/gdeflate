@@ -18,66 +18,71 @@
 
 #pragma once
 
-#include "Utils.h"
-#include <GDeflateConfig.h>
-
-#include <assert.h>
-#include <stdint.h>
-
+#include <stddef.h> // NOLINT(*-deprecated-headers)
+#include <stdint.h> // NOLINT(*-deprecated-headers)
 #include <string>
+
+#include <GDeflateConfig.h>
+#include "Utils.h"
 
 namespace GDeflate
 {
+
 #pragma pack(push, 1)
-    struct TileStream
+
+struct TileStream
+{
+    static constexpr uint32_t kMaxTiles = (1 << 16) - 1;
+
+    uint8_t id;
+    uint8_t magic;
+
+    uint16_t numTiles;
+
+    uint32_t tileSizeIdx : 2; // this must be set to 1
+    uint32_t lastTileSize : 18;
+    uint32_t reserved1 : 12;
+
+    explicit TileStream(size_t uncompressedSize)
+            : id(0)
+            , magic(0)
+            , numTiles(0)
+            , tileSizeIdx(1)
+            , lastTileSize(0)
+            , reserved1(0)
     {
-        static constexpr uint32_t kMaxTiles = (1 << 16) - 1;
+        SetCodecId(kGDeflateId);
+        SetUncompressedSize(uncompressedSize);
+    }
 
-        uint8_t id;
-        uint8_t magic;
+    [[nodiscard]] bool IsValid() const
+    {
+        return id == (magic ^ 0xff);
+    }
 
-        uint16_t numTiles;
+    [[nodiscard]] size_t GetUncompressedSize() const
+    {
+        return numTiles * kDefaultTileSize - (lastTileSize == 0 ? 0 : kDefaultTileSize - lastTileSize);
+    }
 
-        uint32_t tileSizeIdx : 2; // this must be set to 1
-        uint32_t lastTileSize : 18;
-        uint32_t reserved1 : 12;
+private:
+    void SetCodecId(uint8_t inId)
+    {
+        id = inId;
+        magic = inId ^ 0xff;
+    }
 
-        TileStream(size_t uncompressedSize)
-        {
-            memset(this, 0, sizeof(*this));
-            tileSizeIdx = 1;
-            SetCodecId(kGDeflateId);
-            SetUncompressedSize(uncompressedSize);
-        }
+    void SetUncompressedSize(size_t size)
+    {
+        numTiles = static_cast<uint16_t>(size / kDefaultTileSize);
+        lastTileSize = static_cast<uint32_t>(size - numTiles * kDefaultTileSize);
 
-        bool IsValid() const
-        {
-            return id == (magic ^ 0xff);
-        }
+        numTiles += lastTileSize != 0 ? 1 : 0;
+    }
+};
 
-        size_t GetUncompressedSize() const
-        {
-            return numTiles * kDefaultTileSize - (lastTileSize == 0 ? 0 : kDefaultTileSize - lastTileSize);
-        }
-
-    private:
-        void SetCodecId(uint8_t inId)
-        {
-            id = inId;
-            magic = inId ^ 0xff;
-        }
-
-        void SetUncompressedSize(size_t size)
-        {
-            numTiles = static_cast<uint16_t>(size / kDefaultTileSize);
-            lastTileSize = static_cast<uint32_t>(size - numTiles * kDefaultTileSize);
-
-            numTiles += lastTileSize != 0 ? 1 : 0;
-        }
-    };
+static_assert(sizeof(TileStream) == 8, "Tile stream header size overrun!");
 
 #pragma pack(pop)
-
-    static_assert(sizeof(TileStream) == 8, "Tile stream header size overrun!");
 
 } // namespace GDeflate

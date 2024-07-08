@@ -22,25 +22,26 @@
 
 namespace GDeflate
 {
-    // See README.MD in libdeflate_1_8 for details on Compression Levels
-    static const uint32_t MinimumCompressionLevel = 1;
-    static const uint32_t MaximumCompressionLevel = 12;
 
-    enum Flags
-    {
-        COMPRESS_SINGLE_THREAD = 0x200, /*!< Force compression using a single thread. */
-    };
+// See README.MD in libdeflate_1_8 for details on Compression Levels
+static const uint32_t MinimumCompressionLevel = 1;
+static const uint32_t MaximumCompressionLevel = 12;
 
-    size_t CompressBound(size_t size);
+enum Flags
+{
+    COMPRESS_SINGLE_THREAD = 0x200, /*!< Force compression using a single thread. */
+};
 
-    bool Compress(
-        uint8_t* output,
-        size_t* outputSize,
-        const uint8_t* in,
-        size_t inSize,
-        uint32_t level,
-        uint32_t flags);
+size_t CompressBound(size_t size);
 
-    bool Decompress(uint8_t* output, size_t outputSize, const uint8_t* in, size_t inSize, uint32_t numWorkers);
+bool Compress(
+    uint8_t* output,
+    size_t* outputSize,
+    const uint8_t* in,
+    size_t inSize,
+    uint32_t level,
+    uint32_t flags);
+
+bool Decompress(uint8_t* output, size_t outputSize, const uint8_t* in, size_t inSize, uint32_t numWorkers);
 
 } // namespace GDeflate

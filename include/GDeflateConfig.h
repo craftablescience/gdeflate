@@ -18,12 +18,14 @@
 
 #pragma once
 
-#include <stddef.h>
-#include <stdint.h>
+#include <stddef.h> // NOLINT(*-deprecated-headers)
+#include <stdint.h> // NOLINT(*-deprecated-headers)
 
 namespace GDeflate
 {
-    static constexpr uint8_t kGDeflateId = 4;
 
-    static const size_t kDefaultTileSize = 64 * 1024; /*!< Default tile size */
+static constexpr uint8_t kGDeflateId = 4;
+
+static const size_t kDefaultTileSize = 64 * 1024; /*!< Default tile size */
+
 } // namespace GDeflate
