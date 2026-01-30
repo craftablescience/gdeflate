@@ -703,9 +703,9 @@ void zstdgpu_ReferenceStore_Report_DecompressedSequences(const uint32_t *sequenc
     ZSTDGPU_ASSERT(zstdgpu_DecodeSeqRepeatOffsetEncoded(recent3) == 0);
 
     // on GPU these offsets are available after cross-block propagation
-    GZstd.PerSeqStreamFinalOffset1[GBlockIndexCMP - 1u] = recent1;
-    GZstd.PerSeqStreamFinalOffset2[GBlockIndexCMP - 1u] = recent2;
-    GZstd.PerSeqStreamFinalOffset3[GBlockIndexCMP - 1u] = recent3;
+    GZstd.PerSeqStreamFinalOffset1[i] = recent1;
+    GZstd.PerSeqStreamFinalOffset2[i] = recent2;
+    GZstd.PerSeqStreamFinalOffset3[i] = recent3;
 
     GSequenceCount += sequenceCount;
 
