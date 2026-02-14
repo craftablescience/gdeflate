@@ -38,6 +38,7 @@
 #include "ZstdGpuComputePrefixSum.h"
 #include "ZstdGpuDecodeHuffmanWeights.h"
 #include "ZstdGpuDecompressHuffmanWeights.h"
+#include "ZstdGpuDecompressLiterals.h"
 #include "ZstdGpuDecompressSequences.h"
 #include "ZstdGpuExecuteSequences128.h"
 #include "ZstdGpuExecuteSequences64.h"
@@ -45,6 +46,7 @@
 #include "ZstdGpuFinaliseSequenceOffsets.h"
 #include "ZstdGpuGroupCompressedLiterals.h"
 #include "ZstdGpuInitFseTable.h"
+#include "ZstdGpuInitHuffmanTable.h"
 #include "ZstdGpuInitHuffmanTableAndDecompressLiterals.h"
 #include "ZstdGpuInitResources.h"
 #include "ZstdGpuMemsetMemcpy.h"
@@ -279,6 +281,7 @@ static void zstdgpu_ReCreate_SRTs(zstdgpu_SRTs & srts, ID3D12Device *device, con
     ZSTDGPU_KERNEL(ComputePrefixSum                         , L"Compute Prefix of Literal and TG Count for Literal Decompression")  \
     ZSTDGPU_KERNEL(DecodeHuffmanWeights                     , L"Decode (from nibbles) Uncompressed Huffman Weights")                \
     ZSTDGPU_KERNEL(DecompressHuffmanWeights                 , L"Decompress FSE-compressed Huffman Weights")                         \
+    ZSTDGPU_KERNEL(DecompressLiterals                       , L"Decompress Literals")                                               \
     ZSTDGPU_KERNEL(DecompressSequences                      , L"Decompress Sequences")                                              \
     ZSTDGPU_KERNEL(ExecuteSequences128                      , L"Execute Sequences 128")                                             \
     ZSTDGPU_KERNEL(ExecuteSequences64                       , L"Execute Sequences 64")                                              \
@@ -286,6 +289,7 @@ static void zstdgpu_ReCreate_SRTs(zstdgpu_SRTs & srts, ID3D12Device *device, con
     ZSTDGPU_KERNEL(FinaliseSequenceOffsets                  , L"Finalise Sequence Offsets")                                         \
     ZSTDGPU_KERNEL(GroupCompressedLiterals                  , L"Group Huffman-compressed Literals")                                 \
     ZSTDGPU_KERNEL(InitFseTable                             , L"Init Fse Table")                                                    \
+    ZSTDGPU_KERNEL(InitHuffmanTable                         , L"Init Huffman Table")                                                \
     ZSTDGPU_KERNEL(InitHuffmanTableAndDecompressLiterals    , L"Init Huffman Table and Decompress Literals")                        \
     ZSTDGPU_KERNEL(InitResources                            , L"Init Resources")                                                    \
     ZSTDGPU_KERNEL(MemsetMemcpy                             , L"Memset-Memcpy")                                                     \
@@ -312,7 +316,9 @@ static void zstdgpu_ReCreate_SRTs(zstdgpu_SRTs & srts, ID3D12Device *device, con
     ZSTDGPU_KERNEL_SCOPE_X(InitFseTable                         , L"Init FSE Tables"            )   \
     ZSTDGPU_KERNEL_SCOPE_X(DecompressHuffmanWeights             , L"Decompress Huffman Weights" )   \
     ZSTDGPU_KERNEL_SCOPE_X(DecodeHuffmanWeights                 , L"Decode Huffman Weights"     )   \
-    ZSTDGPU_KERNEL_SCOPE_X(InitHuffmanTableAndDecompressLiterals, L"Init Huffman Table and Decompress Literals Huffman Weights" )   \
+    ZSTDGPU_KERNEL_SCOPE_X(InitHuffmanTable                     , L"Init Huffman Table"         )   \
+    ZSTDGPU_KERNEL_SCOPE_X(DecompressLiterals                   , L"Decompress Literals"         )  \
+    ZSTDGPU_KERNEL_SCOPE_X(InitHuffmanTableAndDecompressLiterals, L"Init Huffman Table and Decompress Literals" )   \
     ZSTDGPU_KERNEL_SCOPE_X(DecompressSequences                  , L"Decompress Sequences"       )   \
     ZSTDGPU_KERNEL_SCOPE_X(PrefixSequenceOffsets                , L"Propagate Sequence Offsets" )   \
     ZSTDGPU_KERNEL_SCOPE_X(FinaliseSequenceOffsets              , L"Finalise Sequence Offsets"  )   \
@@ -1596,13 +1602,65 @@ void zstdgpu_SubmitStage2(zstdgpu_PerRequestContext req, ID3D12GraphicsCommandLi
 
     if (req->zstdCmpBlockCount > 0)
     {
+        PIXBeginEvent(cmdList, PIX_COLOR_DEFAULT, L"[Pre-Init Huffman Table]");
+        BIND_RS_PS_SRT(InitHuffmanTable);
+        ID3D12Resource* argBuf = req->resData.gpuOnly.Counters;
+
+        ZSTDGPU_KERNEL_SCOPE(InitHuffmanTable, cmdList,
+        {
+            PIXBeginEvent(cmdList, PIX_COLOR_DEFAULT, L"[Path: FSE-compressed Huffman Weights]");
+            {
+                cmdList->SetComputeRoot32BitConstant(1, /** HuffmaTableIndexBase*/0, 0);
+                cmdList->ExecuteIndirect(req->dispatchCmdSig, 1, argBuf, kzstdgpu_CounterIndex_FseHufW * sizeof(uint32_t), NULL, 0);
+            }
+            PIXEndEvent(cmdList);
+
+            PIXBeginEvent(cmdList, PIX_COLOR_DEFAULT, L"[Path: Uncompressed Huffman Weights]");
+            {
+                cmdList->SetComputeRoot32BitConstant(1, /** HuffmaTableIndexBase = zstdCmpBlockCount meaning indices are reversed */req->zstdCmpBlockCount, 0);
+                cmdList->ExecuteIndirect(req->dispatchCmdSig, 1, argBuf, kzstdgpu_CounterIndex_HUF_WgtStreams * sizeof(uint32_t), NULL, 0);
+            }
+            PIXEndEvent(cmdList);
+        });
+
+        PIXEndEvent(cmdList);
+    }
+
+    if (req->zstdCmpBlockCount > 0)
+    {
+        PIXBeginEvent(cmdList, PIX_COLOR_DEFAULT, L"Barrier with Resources for [Decompress Literals]");
+        D3D12_RESOURCE_BARRIER barriers[3];
+        // last written by [Init Huffman Table]
+        // next read by [Decompress Literals]
+        setResourceUavToSrvSync(barriers, 0, req->resData.gpuOnly.HuffmanTableInfo);
+        setResourceUavToSrvSync(barriers, 1, req->resData.gpuOnly.HuffmanTableRankIndex);
+        setResourceUavToSrvSync(barriers, 2, req->resData.gpuOnly.HuffmanTableCodeAndSymbol);
+        cmdList->ResourceBarrier(_countof(barriers), barriers);
+        PIXEndEvent(cmdList);
+    }
+
+    if (req->zstdCmpBlockCount > 0)
+    {
+        PIXBeginEvent(cmdList, PIX_COLOR_DEFAULT, L"[Decompress Literals]");
+        BIND_RS_PS_SRT(DecompressLiterals);
+        cmdList->SetComputeRoot32BitConstant(1, req->zstdCmpBlockCount, 0);
+
+        ID3D12Resource* argBuf = req->resData.gpuOnly.Counters;
+        ZSTDGPU_KERNEL_SCOPE(DecompressLiterals, cmdList,
+            cmdList->ExecuteIndirect(req->dispatchCmdSig, 1, argBuf, kzstdgpu_CounterIndex_DecompressLiteralsGroups * sizeof(uint32_t), NULL, 0);
+        );
+        PIXEndEvent(cmdList);
+    }
+
+    if (req->zstdCmpBlockCount > 0)
+    {
         PIXBeginEvent(cmdList, PIX_COLOR_DEFAULT, L"[Init Huffman Table and Decompress Literals]");
         BIND_RS_PS_SRT(InitHuffmanTableAndDecompressLiterals);
         cmdList->SetComputeRoot32BitConstant(1, req->zstdCmpBlockCount, 0);
 
-        ID3D12Resource* argBuf = req->resData.gpuOnly.Counters;
+        //ID3D12Resource* argBuf = req->resData.gpuOnly.Counters;
         ZSTDGPU_KERNEL_SCOPE(InitHuffmanTableAndDecompressLiterals, cmdList,
-            cmdList->ExecuteIndirect(req->dispatchCmdSig, 1, argBuf, kzstdgpu_CounterIndex_DecompressLiteralsGroups * sizeof(uint32_t), NULL, 0);
+            //cmdList->ExecuteIndirect(req->dispatchCmdSig, 1, argBuf, kzstdgpu_CounterIndex_DecompressLiteralsGroups * sizeof(uint32_t), NULL, 0);
         );
         PIXEndEvent(cmdList);
     }

@@ -103,6 +103,22 @@
 #   endif
 #endif
 
+#ifndef ZSTDGPU_PARAM_LDS_IN
+#   ifdef __hlsl_dx_compiler
+#       define ZSTDGPU_PARAM_LDS_IN(type) type
+#   else
+#       define ZSTDGPU_PARAM_LDS_IN(type) const type *
+#   endif
+#endif
+
+#ifndef ZSTDGPU_PARAM_LDS_INOUT
+#   ifdef __hlsl_dx_compiler
+#       define ZSTDGPU_PARAM_LDS_INOUT(type) type
+#   else
+#       define ZSTDGPU_PARAM_LDS_INOUT(type) type *
+#   endif
+#endif
+
 #ifndef ZSTDGPU_BRANCH
 #   ifdef __hlsl_dx_compiler
 #      define ZSTDGPU_BRANCH [branch]
@@ -178,23 +194,23 @@ static const uint32_t kzstdgpu_CounterIndex_DecompressSequencesGroups = 24;
 
 static const uint32_t kzstdgpu_CounterIndex_HUF_WgtStreams = 27;
 
-static const uint32_t kzstdgpu_CounterIndex_Seq_Streams_DecodedItems = 28;
-static const uint32_t kzstdgpu_CounterIndex_HUF_Streams_DecodedBytes = 29;
-static const uint32_t kzstdgpu_CounterIndex_Seq_Streams = 30;
-static const uint32_t kzstdgpu_CounterIndex_HUF_Streams = 31;
-static const uint32_t kzstdgpu_CounterIndex_RAW_Streams = 32;
-static const uint32_t kzstdgpu_CounterIndex_RLE_Streams = 33;
+static const uint32_t kzstdgpu_CounterIndex_Seq_Streams_DecodedItems = 30;
+static const uint32_t kzstdgpu_CounterIndex_HUF_Streams_DecodedBytes = 31;
+static const uint32_t kzstdgpu_CounterIndex_Seq_Streams = 32;
+static const uint32_t kzstdgpu_CounterIndex_HUF_Streams = 33;
+static const uint32_t kzstdgpu_CounterIndex_RAW_Streams = 34;
+static const uint32_t kzstdgpu_CounterIndex_RLE_Streams = 35;
 
-static const uint32_t kzstdgpu_CounterIndex_Blocks_RAW = 34;
-static const uint32_t kzstdgpu_CounterIndex_Blocks_RLE = 35;
-static const uint32_t kzstdgpu_CounterIndex_Blocks_CMP = 36;
+static const uint32_t kzstdgpu_CounterIndex_Blocks_RAW = 36;
+static const uint32_t kzstdgpu_CounterIndex_Blocks_RLE = 37;
+static const uint32_t kzstdgpu_CounterIndex_Blocks_CMP = 38;
 
-static const uint32_t kzstdgpu_CounterIndex_BlocksBytes_RAW = 37;
-static const uint32_t kzstdgpu_CounterIndex_BlocksBytes_RLE = 38;
+static const uint32_t kzstdgpu_CounterIndex_BlocksBytes_RAW = 39;
+static const uint32_t kzstdgpu_CounterIndex_BlocksBytes_RLE = 40;
 
-static const uint32_t kzstdgpu_CounterIndex_Frames = 39;
-static const uint32_t kzstdgpu_CounterIndex_Frames_UncompressedByteSize = 40;
-static const uint32_t kzstdgpu_CounterIndex_Count = 42;
+static const uint32_t kzstdgpu_CounterIndex_Frames = 41;
+static const uint32_t kzstdgpu_CounterIndex_Frames_UncompressedByteSize = 42;
+static const uint32_t kzstdgpu_CounterIndex_Count = 43;
 
 // NOTE(pamartis):
 //      We use macro here to make sure we can use them to compile-out
@@ -1324,6 +1340,14 @@ static inline uint32_t zstdgpu_InitResources_GetDispatchSizeX(uint32_t allBlockC
     ZSTDGPU_RW_TYPED_BUFFER_DECL(uint32_t, uint8_t              , DecompressedHuffmanWeights    , 0)    \
     ZSTDGPU_RW_TYPED_BUFFER_DECL(uint32_t, uint8_t              , DecompressedHuffmanWeightCount, 1)
 
+#define ZSTDGPU_INIT_HUFFMAN_TABLE_SRT()                                                                \
+    ZSTDGPU_RO_TYPED_BUFFER_DECL(uint32_t, uint8_t              , DecompressedHuffmanWeights    , 0)    \
+    ZSTDGPU_RO_TYPED_BUFFER_DECL(uint32_t, uint8_t              , DecompressedHuffmanWeightCount, 1)    \
+    \
+    ZSTDGPU_RW_BUFFER_DECL(uint32_t                             , HuffmanTableInfo              , 0)    \
+    ZSTDGPU_RW_BUFFER_DECL(uint32_t                             , HuffmanTableCodeAndSymbol     , 1)    \
+    ZSTDGPU_RW_BUFFER_DECL(uint32_t                             , HuffmanTableRankIndex         , 2)
+
 #define ZSTDGPU_INIT_HUFFMAN_TABLE_AND_DECOMPRESS_LITERALS_SRT()                                        \
     ZSTDGPU_RO_BUFFER_DECL(uint32_t                             , LitStreamEndPerHuffmanTable   , 0)    \
     ZSTDGPU_RO_BUFFER_DECL(uint32_t                             , LitGroupEndPerHuffmanTable    , 1)    \
@@ -1334,6 +1358,20 @@ static inline uint32_t zstdgpu_InitResources_GetDispatchSizeX(uint32_t allBlockC
     \
     ZSTDGPU_RO_TYPED_BUFFER_DECL(uint32_t, uint8_t              , DecompressedHuffmanWeights    , 6)    \
     ZSTDGPU_RO_TYPED_BUFFER_DECL(uint32_t, uint8_t              , DecompressedHuffmanWeightCount, 7)    \
+    \
+    ZSTDGPU_RW_TYPED_BUFFER_DECL(uint32_t, uint8_t              , DecompressedLiterals          , 0)
+
+#define ZSTDGPU_DECOMPRESS_LITERALS_SRT()                                                               \
+    ZSTDGPU_RO_BUFFER_DECL(uint32_t                             , LitStreamEndPerHuffmanTable   , 0)    \
+    ZSTDGPU_RO_BUFFER_DECL(uint32_t                             , LitGroupEndPerHuffmanTable    , 1)    \
+    ZSTDGPU_RO_BUFFER_DECL(uint32_t                             , Counters                      , 2)    \
+    ZSTDGPU_RO_BUFFER_DECL(uint32_t                             , LitStreamRemap                , 3)    \
+    ZSTDGPU_RO_BUFFER_DECL(zstdgpu_LitStreamInfo                , LitRefs                       , 4)    \
+    ZSTDGPU_RO_BUFFER_DECL(uint32_t                             , CompressedData                , 5)    \
+    \
+    ZSTDGPU_RO_BUFFER_DECL(uint32_t                             , HuffmanTableInfo              , 6)    \
+    ZSTDGPU_RO_BUFFER_DECL(uint32_t                             , HuffmanTableCodeAndSymbol     , 7)    \
+    ZSTDGPU_RO_BUFFER_DECL(uint32_t                             , HuffmanTableRankIndex         , 8)    \
     \
     ZSTDGPU_RW_TYPED_BUFFER_DECL(uint32_t, uint8_t              , DecompressedLiterals          , 0)
 
@@ -1413,7 +1451,9 @@ static inline uint32_t zstdgpu_InitResources_GetDispatchSizeX(uint32_t allBlockC
     ZSTDGPU_SRT(InitFseTable                            , ZSTDGPU_INIT_FSE_TABLE_SRT())                             \
     ZSTDGPU_SRT(DecompressHuffmanWeights                , ZSTDGPU_DECOMPRESS_HUFFMAN_WEIGHTS_SRT())                 \
     ZSTDGPU_SRT(DecodeHuffmanWeights                    , ZSTDGPU_DECODE_HUFFMAN_WEIGHTS_SRT())                     \
+    ZSTDGPU_SRT(InitHuffmanTable                        , ZSTDGPU_INIT_HUFFMAN_TABLE_SRT())                         \
     ZSTDGPU_SRT(InitHuffmanTableAndDecompressLiterals   , ZSTDGPU_INIT_HUFFMAN_TABLE_AND_DECOMPRESS_LITERALS_SRT()) \
+    ZSTDGPU_SRT(DecompressLiterals                      , ZSTDGPU_DECOMPRESS_LITERALS_SRT())                        \
     ZSTDGPU_SRT(DecompressSequences                     , ZSTDGPU_DECOMPRESS_SEQUENCES_SRT())                       \
     ZSTDGPU_SRT(FinaliseSequenceOffsets                 , ZSTDGPU_FINALISE_SEQUENCE_OFFSETS_SRT())                  \
     ZSTDGPU_SRT(MemsetMemcpy                            , ZSTDGPU_MEMSET_MEMCPY_SRT())                              \
@@ -1477,11 +1517,22 @@ typedef struct zstdgpu_DecodeHuffmanWeights_SRT
     uint32_t    compressedBufferSizeInBytes;
 } zstdgpu_DecodeHuffmanWeights_SRT;
 
+typedef struct zstdgpu_InitHuffmanTable_SRT
+{
+    ZSTDGPU_INIT_HUFFMAN_TABLE_SRT();
+} zstdgpu_InitHuffmanTable_SRT;
+
 typedef struct zstdgpu_InitHuffmanTable_And_DecompressLiterals_SRT
 {
     ZSTDGPU_INIT_HUFFMAN_TABLE_AND_DECOMPRESS_LITERALS_SRT()
     uint32_t    huffmanTableSlotCount;
 } zstdgpu_InitHuffmanTable_And_DecompressLiterals_SRT;
+
+typedef struct zstdgpu_DecompressLiterals_SRT
+{
+    ZSTDGPU_DECOMPRESS_LITERALS_SRT()
+    uint32_t    huffmanTableSlotCount;
+} zstdgpu_DecompressLiterals_SRT;
 
 typedef struct zstdgpu_DecompressSequences_SRT
 {

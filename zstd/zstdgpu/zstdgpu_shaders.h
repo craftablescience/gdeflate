@@ -154,6 +154,75 @@ static inline uint32_t zstdgpu_BinarySearch(ZSTDGPU_RO_BUFFER(uint32_t) sortedSe
     return rangeBase;
 }
 
+static inline uint32_t zstdgpu_BinarySearchMasked(ZSTDGPU_RO_BUFFER(uint32_t) sortedSequence, uint32_t start, uint32_t count, uint32_t key, uint32_t tstMask)
+{
+    uint32_t rangeBase = start;
+    uint32_t rangeSize = count;
+
+    while (rangeSize > 1)
+    {
+        const uint32_t rangeTest = rangeSize >> 1;
+        const uint32_t rangeNext = rangeBase + rangeTest;
+
+        const uint32_t tst = sortedSequence[rangeNext]  & tstMask;
+        rangeBase = key < tst ? rangeBase : rangeNext;
+        rangeSize -= rangeTest;
+    }
+
+    return rangeBase;
+}
+
+static inline uint32_t zstdgpu_BinarySearchLds(ZSTDGPU_PARAM_LDS_IN(uint32_t) GS_Base, uint32_t start, uint32_t count, uint32_t key, uint32_t tstMask)
+{
+    uint32_t rangeBase = start;
+    uint32_t rangeSize = count;
+
+    while (rangeSize > 1)
+    {
+        const uint32_t rangeTest = rangeSize >> 1;
+        const uint32_t rangeNext = rangeBase + rangeTest;
+
+        const uint32_t tst = zstdgpu_LdsLoadU32(GS_Base + rangeNext) & tstMask;
+        rangeBase = key < tst ? rangeBase : rangeNext;
+        rangeSize -= rangeTest;
+    }
+
+    return rangeBase;
+}
+
+static inline void zstdgpu_GroupBallotLdsStore(uint32_t laneCnt, uint32_t VGPR, ZSTDGPU_PARAM_LDS_INOUT(uint32_t) ballot_GroupDwStart, uint32_t ballot_GroupDwCountPerBit, uint32_t waveId, uint32_t bitIdx)
+{
+    const uint32_t4 b = WaveActiveBallot((VGPR & (1u << bitIdx)) != 0);
+    if (laneCnt <= 16)
+    {
+        uint32_t offsetInDw = ballot_GroupDwCountPerBit * (bitIdx);
+        const uint32_t ballotMaskCntPerDw = 32 / laneCnt;
+        offsetInDw += (waveId) / ballotMaskCntPerDw;
+        const uint32_t ballotMaskIdInDw = (waveId) % ballotMaskCntPerDw;
+        zstdgpu_LdsAtomicOrU32(ballot_GroupDwStart + offsetInDw, b.x << (ballotMaskIdInDw * laneCnt));
+    }
+    else if (laneCnt == 32)
+    {
+        const uint32_t offsetInDw = ballot_GroupDwCountPerBit * (bitIdx) + (waveId);
+        zstdgpu_LdsStoreU32(ballot_GroupDwStart + offsetInDw + 0, b.x);
+    }
+    else if (laneCnt == 64)
+    {
+        const uint32_t offsetInDw = ballot_GroupDwCountPerBit * (bitIdx) + (waveId) * 2;
+        zstdgpu_LdsStoreU32(ballot_GroupDwStart + offsetInDw + 0, b.x);
+        zstdgpu_LdsStoreU32(ballot_GroupDwStart + offsetInDw + 1, b.y);
+    }
+    /* for some GPUs with 128-wide waves, store extra masks*/
+    else
+    {
+        const uint32_t offsetInDw = ballot_GroupDwCountPerBit * (bitIdx) + (waveId) * 4;
+        zstdgpu_LdsStoreU32(ballot_GroupDwStart + offsetInDw + 0, b.x);
+        zstdgpu_LdsStoreU32(ballot_GroupDwStart + offsetInDw + 1, b.y);
+        zstdgpu_LdsStoreU32(ballot_GroupDwStart + offsetInDw + 2, b.z);
+        zstdgpu_LdsStoreU32(ballot_GroupDwStart + offsetInDw + 3, b.w);
+    }
+}
+
 static inline void zstdgpu_ShaderEntry_ParseFrame(ZSTDGPU_PARAM_INOUT(zstdgpu_FrameInfo) outFrameInfo,
                                                   ZSTDGPU_RW_BUFFER(zstdgpu_OffsetAndSize) outBlocksRAWRefs,
                                                   ZSTDGPU_RW_BUFFER(zstdgpu_OffsetAndSize) outBlocksRLERefs,
@@ -497,7 +566,8 @@ static void zstdgpu_ShaderEntry_InitResources(ZSTDGPU_PARAM_INOUT(zstdgpu_InitRe
                                 || i == kzstdgpu_CounterIndex_GroupCompressedLiteralsGroups
                                 || i == kzstdgpu_CounterIndex_DecompressLiteralsGroups
                                 || i == kzstdgpu_CounterIndex_DecompressSequencesGroups
-                                || i >= kzstdgpu_CounterIndex_HUF_WgtStreams;
+                                || i == kzstdgpu_CounterIndex_HUF_WgtStreams
+                                || i >= kzstdgpu_CounterIndex_Seq_Streams_DecodedItems;
 
             if (needsZero)
                 srt.inoutCounters[i] = 0;
@@ -2138,38 +2208,6 @@ static void zstdgpu_ShaderEntry_InitFseTable(ZSTDGPU_PARAM_INOUT(zstdgpu_InitFse
         }
     }
     GroupMemoryBarrierWithGroupSync();
-    #define zstdgpu_Store_VGPR_Bit_PerTg(laneCnt, storage, VGPR, waveId, bitIdx)                        \
-        {                                                                                               \
-            const uint32_t4 b = WaveActiveBallot((VGPR & (1u << bitIdx)) != 0);                         \
-            if (laneCnt <= 16)                                                                          \
-            {                                                                                           \
-                const uint32_t offset = kzstdgpu_MaxCount_FseElemsOneDigitBits * (bitIdx);               \
-                const uint32_t ballotMaskCntInUInt = 32 / laneCnt;                                      \
-                const uint32_t ballotMaskUIntIndex = (waveId) / ballotMaskCntInUInt + offset;           \
-                const uint32_t ballotMaskIdInUInt = (waveId) % ballotMaskCntInUInt;                     \
-                zstdgpu_LdsAtomicOrU32(storage + ballotMaskUIntIndex, b.x << (ballotMaskIdInUInt * laneCnt)); \
-            }                                                                                           \
-            else if (laneCnt == 32)                                                                     \
-            {                                                                                           \
-                const uint32_t offset = kzstdgpu_MaxCount_FseElemsOneDigitBits * (bitIdx) + (waveId);    \
-                zstdgpu_LdsStoreU32(storage + offset + 0, b.x);                                         \
-            }                                                                                           \
-            else if (laneCnt == 64)                                                                     \
-            {                                                                                           \
-                const uint32_t offset = kzstdgpu_MaxCount_FseElemsOneDigitBits * (bitIdx) + (waveId) * 2;\
-                zstdgpu_LdsStoreU32(storage + offset + 0, b.x);                                         \
-                zstdgpu_LdsStoreU32(storage + offset + 1, b.y);                                         \
-            }                                                                                           \
-            /* for some GPUs with 128-wide waves, store extra masks*/                                   \
-            else                                                                                        \
-            {                                                                                           \
-                const uint32_t offset = kzstdgpu_MaxCount_FseElemsOneDigitBits * (bitIdx) + (waveId) * 4;\
-                zstdgpu_LdsStoreU32(storage + offset + 0, b.x);                                         \
-                zstdgpu_LdsStoreU32(storage + offset + 1, b.y);                                         \
-                zstdgpu_LdsStoreU32(storage + offset + 2, b.z);                                         \
-                zstdgpu_LdsStoreU32(storage + offset + 3, b.w);                                         \
-            }                                                                                           \
-        }
 
     // NOTE(pamartis): Transpose N=`tblAllDataCount` symbols (store only bits with index 0, then with index 1 and so on.)
     // and store the transposed representation in LDS (as eight `tblAllDataCount`-wide masks)
@@ -2178,16 +2216,15 @@ static void zstdgpu_ShaderEntry_InitFseTable(ZSTDGPU_PARAM_INOUT(zstdgpu_InitFse
     {
         const uint32_t symbol = srt.inoutFseSymbols[tblDataOffset + workItemId];
 
-        zstdgpu_Store_VGPR_Bit_PerTg(laneCnt, GS_SymbolBitMasks, symbol, waveOfs, 0)
-        zstdgpu_Store_VGPR_Bit_PerTg(laneCnt, GS_SymbolBitMasks, symbol, waveOfs, 1)
-        zstdgpu_Store_VGPR_Bit_PerTg(laneCnt, GS_SymbolBitMasks, symbol, waveOfs, 2)
-        zstdgpu_Store_VGPR_Bit_PerTg(laneCnt, GS_SymbolBitMasks, symbol, waveOfs, 3)
-        zstdgpu_Store_VGPR_Bit_PerTg(laneCnt, GS_SymbolBitMasks, symbol, waveOfs, 4)
-        zstdgpu_Store_VGPR_Bit_PerTg(laneCnt, GS_SymbolBitMasks, symbol, waveOfs, 5)
-        zstdgpu_Store_VGPR_Bit_PerTg(laneCnt, GS_SymbolBitMasks, symbol, waveOfs, 6)
-        zstdgpu_Store_VGPR_Bit_PerTg(laneCnt, GS_SymbolBitMasks, symbol, waveOfs, 7)
+        zstdgpu_GroupBallotLdsStore(laneCnt, symbol, GS_SymbolBitMasks, kzstdgpu_MaxCount_FseElemsOneDigitBits, waveOfs, 0);
+        zstdgpu_GroupBallotLdsStore(laneCnt, symbol, GS_SymbolBitMasks, kzstdgpu_MaxCount_FseElemsOneDigitBits, waveOfs, 1);
+        zstdgpu_GroupBallotLdsStore(laneCnt, symbol, GS_SymbolBitMasks, kzstdgpu_MaxCount_FseElemsOneDigitBits, waveOfs, 2);
+        zstdgpu_GroupBallotLdsStore(laneCnt, symbol, GS_SymbolBitMasks, kzstdgpu_MaxCount_FseElemsOneDigitBits, waveOfs, 3);
+        zstdgpu_GroupBallotLdsStore(laneCnt, symbol, GS_SymbolBitMasks, kzstdgpu_MaxCount_FseElemsOneDigitBits, waveOfs, 4);
+        zstdgpu_GroupBallotLdsStore(laneCnt, symbol, GS_SymbolBitMasks, kzstdgpu_MaxCount_FseElemsOneDigitBits, waveOfs, 5);
+        zstdgpu_GroupBallotLdsStore(laneCnt, symbol, GS_SymbolBitMasks, kzstdgpu_MaxCount_FseElemsOneDigitBits, waveOfs, 6);
+        zstdgpu_GroupBallotLdsStore(laneCnt, symbol, GS_SymbolBitMasks, kzstdgpu_MaxCount_FseElemsOneDigitBits, waveOfs, 7);
 
-        #undef zstdgpu_Store_VGPR_Bit_PerTg
         waveOfs += waveCnt;
     }
     GroupMemoryBarrierWithGroupSync();
@@ -2413,14 +2450,315 @@ static void zstdgpu_ShaderEntry_DecodeHuffmanWeights(ZSTDGPU_PARAM_INOUT(zstdgpu
     }
 }
 
-static void zstdgpu_ShaderEntry_InitHuffmanTable_And_DecompressLiterals(ZSTDGPU_PARAM_INOUT(zstdgpu_InitHuffmanTable_And_DecompressLiterals_SRT) srt, uint32_t groupId, uint32_t threadId)
+static void zstdgpu_PreInitHuffmanTableToLds(ZSTDGPU_RO_TYPED_BUFFER(uint32_t, uint8_t) HuffmanWeights,
+                                             ZSTDGPU_RO_TYPED_BUFFER(uint32_t, uint8_t) HuffmanWeightCount,
+                                             uint32_t tableId,
+                                             uint32_t threadId,
+                                             uint32_t threadCnt,
+                                             ZSTDGPU_PARAM_INOUT(uint32_t) outBitsMax,
+                                             ZSTDGPU_PARAM_INOUT(uint32_t) outCodeTableSize,
+                                             /**
+                                              * NOTE(pamartis): Since HLSL doesn't allow us to declare 'groupshared' memory region within function
+                                              * or pass such region as a parameter, we resort to passing an integer 'GS_Region' (and later) variable(s) controlling the start
+                                              * of region of LDS memory allocated externally.
+                                              *
+                                              * HLSL also doesn't give us any means of enforcing 'GS_Region' to be a compile-time constant.
+                                              */
+                                             ZSTDGPU_PARAM_LDS_INOUT(uint32_t) GS_Region,
+                                             /**
+                                              * NOTE(pamartis): Since HLSL is doesn't give us way to specify callbacks/lambdas, in this case
+                                              * to either implement storing pre-initialised Huffman Table to either LDS or Memory, we have
+                                              * to pass both:
+                                              *     - LDS region as 'GS_OutCodeAndSymbol'
+                                              *     - Memory region as 'MEM_OutCodeAndSymbol'
+                                              * and supply additional 'bool isMemStore' controlling whether to use LDS or Memory as destination
+                                              */
+                                             ZSTDGPU_PARAM_LDS_INOUT(uint32_t) GS_RankIndex,
+                                             ZSTDGPU_PARAM_LDS_INOUT(uint32_t) GS_CodeAndSymbol,
+                                             ZSTDGPU_RW_BUFFER(uint32_t) MEM_CodeAndSymbol,
+                                             bool isMemStore)
 {
-    uint32_t htTableIndex = 0;
+    const uint32_t weightCntMinusOne = HuffmanWeightCount[tableId];
+
+    ZSTDGPU_DECLARE_GROUPSHARED(Bits            , kzstdgpu_MaxCount_HuffmanWeights); //< WARN(pamartis): Wasteful, need only uint8_t but HLSL doesn't support it
+    ZSTDGPU_DECLARE_GROUPSHARED(BitsMask        , kzstdgpu_MaxCount_HuffmanWeightsAllDigitBits);
+    ZSTDGPU_DECLARE_GROUPSHARED(RankCount       , kzstdgpu_MaxCount_HuffmanWeightRanks);
+    ZSTDGPU_DECLARE_GROUPSHARED(RankCountPrefix , kzstdgpu_MaxCount_HuffmanWeightRanks);
+    ZSTDGPU_DECLARE_GROUPSHARED(WeightSum       , 1);
+    ZSTDGPU_DECLARE_GROUPSHARED(BitsMax         , 1);
+
+    ZSTDGPU_FOR_WORK_ITEMS(i, 1, threadId, threadCnt)
+    {
+        zstdgpu_LdsStoreU32(GS_WeightSum, 0);
+        zstdgpu_LdsStoreU32(GS_BitsMax, 0);
+    }
+
+    ZSTDGPU_FOR_WORK_ITEMS(i, kzstdgpu_MaxCount_HuffmanWeightRanks, threadId, threadCnt)
+    {
+        zstdgpu_LdsStoreU32(GS_RankCount + i, 0);
+        zstdgpu_LdsStoreU32(GS_RankIndex + i, 0);
+        zstdgpu_LdsStoreU32(GS_RankCountPrefix + i, 0);
+    }
+
+    #ifdef __hlsl_dx_compiler
+    // NOTE(pamartis): When the number of lanes in the wave <= 16, we need to initialize GS_BitsMask to zero
+    // because we use InterlockedOr on each 32-bit GS_BitsMask[i] to store wave masks (see StoreGroupBitMask)...
+    if (WaveGetLaneCount() <= 16)
+        #else
+        // always in non-HLSL case
+        #endif
+    {
+        ZSTDGPU_FOR_WORK_ITEMS(i, kzstdgpu_MaxCount_HuffmanWeightsAllDigitBits, threadId, threadCnt)
+        {
+            zstdgpu_LdsStoreU32(GS_BitsMask + i, 0);
+        }
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    ZSTDGPU_FOR_WORK_ITEMS(i, weightCntMinusOne, threadId, threadCnt)
+    {
+        const uint32_t weight = HuffmanWeights[tableId * kzstdgpu_MaxCount_HuffmanWeights + i];
+
+        // weights are in range [0;16], so the maximim accumulated value is 0x8000
+        const uint32_t weightSumPerWave = WaveActiveSum(weight > 0u ? (1u << (weight - 1u)) : 0u);
+
+        if (WaveIsFirstLane())
+        {
+            zstdgpu_LdsAtomicAddU32(GS_WeightSum, weightSumPerWave);
+        }
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    // because the maximal accumulated value is 0x8000 and there're only 255 weights possible (because the last weight isn't stored)
+    // the maximum value of `GS_WeightSum` is 0x8000 * 255 = 0x7f8000, which means the largest possible highest bit index is 22, and
+    // the largest possible `maxBitsUniform` is `23`
+
+    const uint32_t weightSumUniform = zstdgpu_LdsLoadU32(GS_WeightSum);
+
+    const uint32_t maxBitsUniform = zstdgpu_FindFirstBitHiU32(weightSumUniform) + 1u;
+    const uint32_t leftoverBitsUniform = (1u << maxBitsUniform) - weightSumUniform;
+    const uint32_t lastWeightUniform = zstdgpu_FindFirstBitHiU32(leftoverBitsUniform) + 1u;
+
+    const uint32_t laneCnt = zstdgpu_MinU32(threadCnt, WaveGetLaneCount());
+    // NOTE(pamartis): the above is important because `threadCnt` is fixed,
+    // so WaveGetLaneCount() could be > `threadCnt`
+    #ifdef __hlsl_dx_compiler
+    const uint32_t waveCnt = threadCnt / laneCnt;
+    #else
+    const uint32_t waveCnt = 1;
+    #endif
+
+    // NOTE(pamartis): Use `WaveReadLaneFirst` to make sure `waveIdx` is wave-uniform
+    const uint32_t waveIdx = WaveReadLaneFirst(threadId / laneCnt);
+
+    uint32_t waveOfs = waveIdx;
+    const uint32_t weightCnt = weightCntMinusOne + 1;
+    ZSTDGPU_FOR_WORK_ITEMS(weightId, weightCnt, threadId, threadCnt)
+    {
+        // TODO(pamartis): consider if we can avoid re-loading weights from memory (it's only 256 bytes worst case)
+        const uint32_t weight = HuffmanWeights[tableId * kzstdgpu_MaxCount_HuffmanWeights + weightId];
+
+        uint32_t bits = 0u;
+        if (weightId < weightCntMinusOne)
+        {
+            bits = weight > 0u ? (maxBitsUniform + 1u - weight) : 0u;
+        }
+        else
+        {
+            bits = maxBitsUniform + 1u - lastWeightUniform;
+        }
+
+        zstdgpu_LdsStoreU32(GS_Bits + weightId, bits);
+
+        zstdgpu_GroupBallotLdsStore(laneCnt, bits, GS_BitsMask, kzstdgpu_MaxCount_HuffmanWeightsOneDigitBits, waveOfs, 0);
+        zstdgpu_GroupBallotLdsStore(laneCnt, bits, GS_BitsMask, kzstdgpu_MaxCount_HuffmanWeightsOneDigitBits, waveOfs, 1);
+        zstdgpu_GroupBallotLdsStore(laneCnt, bits, GS_BitsMask, kzstdgpu_MaxCount_HuffmanWeightsOneDigitBits, waveOfs, 2);
+        zstdgpu_GroupBallotLdsStore(laneCnt, bits, GS_BitsMask, kzstdgpu_MaxCount_HuffmanWeightsOneDigitBits, waveOfs, 3);
+        zstdgpu_GroupBallotLdsStore(laneCnt, bits, GS_BitsMask, kzstdgpu_MaxCount_HuffmanWeightsOneDigitBits, waveOfs, 4);
+
+        const uint32_t bitsMaxPerWave = WaveActiveMax(bits);
+
+        if (WaveIsFirstLane())
+        {
+            zstdgpu_LdsAtomicMaxU32(GS_BitsMax, bitsMaxPerWave);
+        }
+        zstdgpu_LdsAtomicAddU32(GS_RankCount + bits, 1);
+
+        waveOfs += waveCnt;
+    }
+    GroupMemoryBarrierWithGroupSync();
+
+    outBitsMax = zstdgpu_LdsLoadU32(GS_BitsMax);
+
+    // NOTE(pamartis): initialize RankIndex which is used to determine the starting number of bits
+    #ifndef __hlsl_dx_compiler
+    uint32_t prevRankIndex = 0;
+    uint32_t prevRankCountPrefix = 0;
+    #endif
+    ZSTDGPU_FOR_WORK_ITEMS(workItemId, outBitsMax + 1u, threadId, threadCnt)
+    {
+        const uint32_t rankCountId = outBitsMax - workItemId;
+        const uint32_t rankCount= zstdgpu_LdsLoadU32(GS_RankCount + rankCountId);
+        #ifdef __hlsl_dx_compiler
+        uint32_t rankIndexInWave = WavePrefixSum(rankCount << workItemId);
+        uint32_t rankCountPrefixInWave = WavePrefixSum(rankCount);
+
+        zstdgpu_LdsAtomicAddU32(GS_RankIndex + workItemId, rankIndexInWave);
+        zstdgpu_LdsAtomicAddU32(GS_RankCountPrefix + workItemId, rankCountPrefixInWave);
+
+        // NOTE(pamartis): In case if the number of lanes is smaller than `bitsMax + 1`, every wave needs to update local prefix sums of other waves
+        if (laneCnt < outBitsMax + 1)
+        {
+            const uint32_t lastLaneIndex = WaveActiveCountBits(true) - 1;
+            const uint32_t rankIndexWaveSum = WaveReadLaneAt(rankIndexInWave + (rankCount << workItemId), lastLaneIndex);
+            const uint32_t rankCountPrefixWaveSum = WaveReadLaneAt(rankCountPrefixInWave + rankCount, lastLaneIndex);
+
+            for (uint32_t workItemNxt = workItemId + laneCnt; workItemNxt < outBitsMax + 1; workItemNxt += laneCnt)
+            {
+                zstdgpu_LdsAtomicAddU32(GS_RankIndex + workItemNxt, rankIndexWaveSum);
+                zstdgpu_LdsAtomicAddU32(GS_RankCountPrefix + workItemNxt, rankCountPrefixWaveSum);
+            }
+        }
+
+        #else
+        zstdgpu_LdsStoreU32(GS_RankIndex + workItemId, prevRankIndex);
+        prevRankIndex += rankCount << workItemId;
+
+        zstdgpu_LdsStoreU32(GS_RankCountPrefix + workItemId, prevRankCountPrefix);
+        prevRankCountPrefix += rankCount;
+        #endif
+    }
+
+    GroupMemoryBarrierWithGroupSync();
+
+    ZSTDGPU_FOR_WORK_ITEMS(weightId, weightCnt, threadId, threadCnt)
+    {
+        const uint32_t uintIdx = weightId >> 5;
+        const uint32_t uintOfs = weightId & 0x1fu;
+
+        const uint32_t bits = zstdgpu_LdsLoadU32(GS_Bits + weightId);
+
+        #define FetchBitsAndAccumulateMask(mask, bits, storage, bitIdx, uintId)     \
+        const uint32_t bit##bitIdx = zstdgpu_LdsLoadU32(storage + (kzstdgpu_MaxCount_HuffmanWeightsOneDigitBits * bitIdx) + uintId);    \
+            mask &= (((bits >> bitIdx) & 0x1u) + ~0u) ^ bit##bitIdx;
+
+        uint32_t prefix = 0;
+        for (uint32_t uintId = 0; uintId < uintIdx; ++uintId)
+        {
+            uint32_t mask = ~0u;
+
+            FetchBitsAndAccumulateMask(mask, bits, GS_BitsMask, 0, uintId);
+            FetchBitsAndAccumulateMask(mask, bits, GS_BitsMask, 1, uintId);
+            FetchBitsAndAccumulateMask(mask, bits, GS_BitsMask, 2, uintId);
+            FetchBitsAndAccumulateMask(mask, bits, GS_BitsMask, 3, uintId);
+            FetchBitsAndAccumulateMask(mask, bits, GS_BitsMask, 4, uintId);
+            prefix += zstdgpu_CountBitsU32(mask);
+        }
+        uint32_t mask = (1u << uintOfs) - 1u;
+        FetchBitsAndAccumulateMask(mask, bits, GS_BitsMask, 0, uintIdx);
+        FetchBitsAndAccumulateMask(mask, bits, GS_BitsMask, 1, uintIdx);
+        FetchBitsAndAccumulateMask(mask, bits, GS_BitsMask, 2, uintIdx);
+        FetchBitsAndAccumulateMask(mask, bits, GS_BitsMask, 3, uintIdx);
+        FetchBitsAndAccumulateMask(mask, bits, GS_BitsMask, 4, uintIdx);
+        #undef FetchBitsAndAccumulateMask
+        prefix += zstdgpu_CountBitsU32(mask);
+
+        const uint32_t bitsInv = outBitsMax - bits;
+        const uint32_t code = zstdgpu_LdsLoadU32(GS_RankIndex + bitsInv) + (prefix << bitsInv);
+        const uint32_t codePos = zstdgpu_LdsLoadU32(GS_RankCountPrefix + bitsInv) + prefix;
+
+        ZSTDGPU_ASSERT(codePos < kzstdgpu_MaxCount_HuffmanWeights);
+
+        const uint32_t weightIdAndCodePacked = (weightId << 24) | (code & 0x00ffffffu);
+
+        if (isMemStore) /** NOTE(pamartis): This must be a compile-time constant, see the comment at the top of the function */
+        {
+            MEM_CodeAndSymbol[tableId * kzstdgpu_MaxCount_HuffmanWeights + codePos] = weightIdAndCodePacked;
+        }
+        else
+        {
+            zstdgpu_LdsStoreU32(GS_CodeAndSymbol + codePos, weightIdAndCodePacked);
+        }
+
+    }
+    outCodeTableSize = zstdgpu_LdsLoadU32(GS_RankCountPrefix + outBitsMax);
+}
+
+static void zstdgpu_ShaderEntry_InitHuffmanTable(ZSTDGPU_PARAM_INOUT(zstdgpu_InitHuffmanTable_SRT) srt, uint32_t groupId, uint32_t threadId, uint32_t tgSize)
+{
+    ZSTDGPU_START_GROUPSHARED()
+    ZSTDGPU_DECLARE_GROUPSHARED(PreInit         , kzstdgpu_MaxCount_HuffmanWeights
+                                                + kzstdgpu_MaxCount_HuffmanWeightsAllDigitBits
+                                                + kzstdgpu_MaxCount_HuffmanWeightRanks
+                                                + kzstdgpu_MaxCount_HuffmanWeightRanks
+                                                + 2);
+
+    ZSTDGPU_DECLARE_GROUPSHARED(RankIndex       , kzstdgpu_MaxCount_HuffmanWeightRanks);
+    ZSTDGPU_DECLARE_GROUPSHARED(CodeAndSymbol   , 1);
+
+    uint32_t bitsMax = 0;
+    uint32_t codeTableSize = 0;
+    zstdgpu_PreInitHuffmanTableToLds(
+        srt.inDecompressedHuffmanWeights,
+        srt.inDecompressedHuffmanWeightCount,
+        groupId,
+        threadId,
+        tgSize,
+        bitsMax,
+        codeTableSize,
+        GS_PreInit,
+        GS_RankIndex,
+        GS_CodeAndSymbol,
+        srt.inoutHuffmanTableCodeAndSymbol,
+        true
+    );
+    ZSTDGPU_FOR_WORK_ITEMS(workItemId, bitsMax + 1u, threadId, tgSize)
+    {
+        srt.inoutHuffmanTableRankIndex[groupId * kzstdgpu_MaxCount_HuffmanWeightRanks + workItemId] = zstdgpu_LdsLoadU32(GS_RankIndex + workItemId);
+    }
+    if (threadId == 0)
+    {
+        srt.inoutHuffmanTableInfo[groupId] = (bitsMax << 16) | codeTableSize;
+    }
+}
+
+static inline void zstdgpu_DecompressHuffmanCompressedLiterals(ZSTDGPU_RO_BUFFER(uint32_t) CompressedData,
+                                                               ZSTDGPU_RO_BUFFER(uint32_t) LitStreamRemap,
+                                                               ZSTDGPU_RO_BUFFER(zstdgpu_LitStreamInfo) LitRefs,
+                                                               ZSTDGPU_RW_TYPED_BUFFER(uint32_t, uint8_t) DecompressedLiterals,
+#if 1 // ASSUME_11BIT_HUFFMAN_CODES
+                                                               ZSTDGPU_PARAM_LDS_IN(uint32_t) GS_HuffmanTable,
+#else
+                                                               ZSTDGPU_PARAM_LDS_IN(uint32_t) GS_RankIndex,
+                                                               ZSTDGPU_PARAM_LDS_IN(uint32_t) GS_CodeAndSymbol,
+#endif
+                                                               uint32_t groupId,
+                                                               uint32_t threadId,
+                                                               uint32_t htGroupStart,
+                                                               uint32_t htLiteralStart,
+                                                               uint32_t htLiteralCount,
+                                                               uint32_t bitsMax,
+#if 0 // !ASSUME_11BIT_HUFFMAN_CODES
+                                                               uint32_t codeTableSize,
+#endif
+                                                               uint32_t tgSize);
+
+
+static void zstdgpu_ConvertThreadgroupIdToDecompressLiteralsInputs(ZSTDGPU_RO_BUFFER(uint32_t) LitGroupEndPerHuffmanTable,
+                                                                   ZSTDGPU_RO_BUFFER(uint32_t) LitStreamEndPerHuffmanTable,
+                                                                   uint32_t htCount,
+                                                                   uint32_t groupId,
+                                                                   ZSTDGPU_PARAM_INOUT(uint32_t) htIndex,
+                                                                   ZSTDGPU_PARAM_INOUT(uint32_t) htGroupStart,
+                                                                   ZSTDGPU_PARAM_INOUT(uint32_t) htLiteralStart,
+                                                                   ZSTDGPU_PARAM_INOUT(uint32_t) htLiteralCount)
+{
+    htIndex = 0;
     {
         uint32_t rangeBase = 0;
 
         // NOTE(pamartis): This number is the number of compressedBlocks
-        uint32_t rangeSize = srt.huffmanTableSlotCount;
+        uint32_t rangeSize = htCount;
 
         // NOTE(pamartis): Binary search for the right Huffman Table Slot (the actual index is different) */
         while (rangeSize > 1)
@@ -2432,32 +2770,152 @@ static void zstdgpu_ShaderEntry_InitHuffmanTable_And_DecompressLiterals(ZSTDGPU_
             if (rangeNext > 0)
                 rangeLoad = rangeNext - 1;
 
-            const uint32_t groupIdStart = srt.inLitGroupEndPerHuffmanTable[rangeLoad];
+            const uint32_t groupIdStart = LitGroupEndPerHuffmanTable[rangeLoad];
 
             rangeBase = groupId < groupIdStart ? rangeBase : rangeNext;
             rangeSize -= rangeTest;
         }
 
-        htTableIndex = rangeBase;
+        htIndex = rangeBase;
     }
 
-    uint32_t htLiteralCount = srt.inLitStreamEndPerHuffmanTable[htTableIndex];
-    uint32_t htLiteralStart = 0;
+    htLiteralCount = LitStreamEndPerHuffmanTable[htIndex];
+    htLiteralStart = 0;
     //uint32_t htGroupCount = ZstdLitGroupStartPerHuffmanTable[rangeBase];
-    uint32_t htGroupStart = 0;
-    if (htTableIndex > 0)
+    htGroupStart = 0;
+    if (htIndex > 0)
     {
-        htLiteralStart = srt.inLitStreamEndPerHuffmanTable[htTableIndex - 1];
+        htLiteralStart = LitStreamEndPerHuffmanTable[htIndex - 1];
         htLiteralCount -= htLiteralStart;
 
-        htGroupStart = srt.inLitGroupEndPerHuffmanTable[htTableIndex - 1];
+        htGroupStart = LitGroupEndPerHuffmanTable[htIndex - 1];
         //htGroupCount -= htGroupStart;
     }
+}
+
+static void zstdgpu_ShaderEntry_DecompressLiterals(ZSTDGPU_PARAM_INOUT(zstdgpu_DecompressLiterals_SRT) srt, uint32_t groupId, uint32_t threadId, uint32_t tgSize)
+{
+    uint32_t htIndex = 0;
+    uint32_t htGroupStart = 0;
+    uint32_t htLiteralStart = 0;
+    uint32_t htLiteralCount= 0;
+
+    zstdgpu_ConvertThreadgroupIdToDecompressLiteralsInputs(
+        srt.inLitGroupEndPerHuffmanTable,
+        srt.inLitStreamEndPerHuffmanTable,
+        srt.huffmanTableSlotCount,
+        groupId,
+        htIndex,
+        htGroupStart,
+        htLiteralStart,
+        htLiteralCount
+    );
+
+
+    ZSTDGPU_START_GROUPSHARED()
+    ZSTDGPU_DECLARE_GROUPSHARED(HuffmanTable, kzstdgpu_MaxCount_HuffmanTableExpandedUInts);
+
+#if 1 // ASSUME_11BIT_HUFFMAN_CODES
+    const uint32_t htInfo = WaveReadLaneFirst(srt.inHuffmanTableInfo[htIndex]);
+    const uint32_t bitsMax = htInfo >> 16;
+    const uint32_t codeTableSize = htInfo & 0xffffu;
+    const uint32_t stateCnt = WaveReadLaneFirst(srt.inHuffmanTableRankIndex[htIndex * kzstdgpu_MaxCount_HuffmanWeightRanks + bitsMax]);
+
+    // Expand Huffman Table
+    ZSTDGPU_FOR_WORK_ITEMS(stateId, stateCnt, threadId, kzstdgpu_TgSizeX_DecompressLiterals)
+    {
+        const uint32_t symbolIndex = zstdgpu_BinarySearchMasked(srt.inHuffmanTableCodeAndSymbol, htIndex * kzstdgpu_MaxCount_HuffmanWeights, codeTableSize, stateId, 0x00ffffffu);
+        const uint32_t bitcntIndex = zstdgpu_BinarySearchMasked(srt.inHuffmanTableRankIndex, htIndex * kzstdgpu_MaxCount_HuffmanWeightRanks, bitsMax + 1, stateId, 0xffffffffu)
+                                   - htIndex * kzstdgpu_MaxCount_HuffmanWeightRanks;
+        const uint32_t symbol = srt.inHuffmanTableCodeAndSymbol[symbolIndex] >> 24;
+        const uint32_t bitcnt = bitsMax - bitcntIndex;
+
+        zstdgpu_LdsStoreU32(GS_HuffmanTable + stateId, (symbol << 16) | bitcnt);
+    }
+    GroupMemoryBarrierWithGroupSync();
+#endif
+
+    zstdgpu_DecompressHuffmanCompressedLiterals(
+        srt.inCompressedData,
+        srt.inLitStreamRemap,
+        srt.inLitRefs,
+        srt.inoutDecompressedLiterals,
+#if 1 // ASSUME_11BIT_HUFFMAN_CODES
+        GS_HuffmanTable,
+#else
+        GS_RankIndex,
+        GS_CodeAndSymbol,
+#endif
+        groupId,
+        threadId,
+        htGroupStart,
+        htLiteralStart,
+        htLiteralCount,
+        bitsMax,
+#if 0 // !ASSUME_11BIT_HUFFMAN_CODES
+        codeTableSize,
+#endif
+        tgSize
+    );
+}
+
+static void zstdgpu_ShaderEntry_InitHuffmanTable_And_DecompressLiterals(ZSTDGPU_PARAM_INOUT(zstdgpu_InitHuffmanTable_And_DecompressLiterals_SRT) srt, uint32_t groupId, uint32_t threadId)
+{
+    uint32_t htIndex = 0;
+    uint32_t htGroupStart = 0;
+    uint32_t htLiteralStart = 0;
+    uint32_t htLiteralCount= 0;
+
+    zstdgpu_ConvertThreadgroupIdToDecompressLiteralsInputs(
+        srt.inLitGroupEndPerHuffmanTable,
+        srt.inLitStreamEndPerHuffmanTable,
+        srt.huffmanTableSlotCount,
+        groupId,
+        htIndex,
+        htGroupStart,
+        htLiteralStart,
+        htLiteralCount
+    );
 
     //
     // The start of the Huffman Table initialisation
     //
-    const uint32_t weightCntMinusOne = srt.inDecompressedHuffmanWeightCount[htTableIndex];
+#if 1
+    ZSTDGPU_START_GROUPSHARED()
+    ZSTDGPU_DECLARE_GROUPSHARED(CodeAndSymbol   , kzstdgpu_MaxCount_HuffmanWeights);
+    ZSTDGPU_DECLARE_GROUPSHARED(PreInit         , kzstdgpu_MaxCount_HuffmanWeights
+                                                + kzstdgpu_MaxCount_HuffmanWeightsAllDigitBits
+                                                + kzstdgpu_MaxCount_HuffmanWeightRanks
+                                                + kzstdgpu_MaxCount_HuffmanWeightRanks
+                                                + 2);
+
+    ZSTDGPU_DECLARE_GROUPSHARED(RankIndex       , kzstdgpu_MaxCount_HuffmanWeightRanks);
+    ZSTDGPU_DECLARE_GROUPSHARED(HuffmanTable    , kzstdgpu_MaxCount_HuffmanTableExpandedUInts);
+
+    ZSTDGPU_RW_BUFFER(uint32_t) dummyBuffer;
+    #ifndef __hlsl_dx_compiler
+    dummyBuffer = 0;
+    #endif
+
+    uint32_t bitsMax = 0;
+    uint32_t codeTableSize = 0;
+    zstdgpu_PreInitHuffmanTableToLds(
+        srt.inDecompressedHuffmanWeights,
+        srt.inDecompressedHuffmanWeightCount,
+        htIndex,
+        threadId,
+        kzstdgpu_TgSizeX_DecompressLiterals,
+        bitsMax,
+        codeTableSize,
+        GS_PreInit,
+        GS_RankIndex,
+        GS_CodeAndSymbol,
+        dummyBuffer,
+        false
+    );
+
+#else
+    const uint32_t weightCntMinusOne = srt.inDecompressedHuffmanWeightCount[htIndex];
 
     ZSTDGPU_START_GROUPSHARED()
     ZSTDGPU_DECLARE_GROUPSHARED(Bits          , kzstdgpu_MaxCount_HuffmanWeights); //< WARN(pamartis): Wasteful, need only uint8_t but HLSL doesn't support it
@@ -2502,7 +2960,7 @@ static void zstdgpu_ShaderEntry_InitHuffmanTable_And_DecompressLiterals(ZSTDGPU_
 
     ZSTDGPU_FOR_WORK_ITEMS(i, weightCntMinusOne, threadId, kzstdgpu_TgSizeX_DecompressLiterals)
     {
-        const uint32_t weight = srt.inDecompressedHuffmanWeights[htTableIndex * kzstdgpu_MaxCount_HuffmanWeights + i];
+        const uint32_t weight = srt.inDecompressedHuffmanWeights[htIndex * kzstdgpu_MaxCount_HuffmanWeights + i];
 
         // weights are in range [0;16], so the maximim accumulated value is 0x8000
         const uint32_t weightSumPerWave = WaveActiveSum(weight > 0u ? (1u << (weight - 1u)) : 0u);
@@ -2537,44 +2995,11 @@ static void zstdgpu_ShaderEntry_InitHuffmanTable_And_DecompressLiterals(ZSTDGPU_
     const uint32_t waveIdx = WaveReadLaneFirst(threadId / laneCnt);
     //const uint32_t laneIdx = threadId % laneCnt;
 
-    #define zstdgpu_Store_VGPR_Bit_PerTg(laneCnt, storage, VGPR, waveId, bitIdx)                    \
-        {                                                                                           \
-            const uint32_t4 b = WaveActiveBallot((VGPR & (1u << bitIdx)) != 0);                     \
-            if (laneCnt <= 16)                                                                      \
-            {                                                                                       \
-                const uint32_t offset = kzstdgpu_MaxCount_HuffmanWeightsOneDigitBits * (bitIdx);    \
-                const uint32_t ballotMaskCntInUInt = 32 / laneCnt;                                  \
-                const uint32_t ballotMaskUIntIndex = (waveId) / ballotMaskCntInUInt + offset;       \
-                const uint32_t ballotMaskIdInUInt = (waveId) % ballotMaskCntInUInt;                 \
-                zstdgpu_LdsAtomicOrU32(storage + ballotMaskUIntIndex, b.x << (ballotMaskIdInUInt * laneCnt)); \
-            }                                                                                       \
-            else if (laneCnt == 32)                                                                 \
-            {                                                                                       \
-                const uint32_t offset = kzstdgpu_MaxCount_HuffmanWeightsOneDigitBits * (bitIdx) + (waveId);      \
-                zstdgpu_LdsStoreU32(storage + offset + 0, b.x);                                     \
-            }                                                                                       \
-            else if (laneCnt == 64)                                                                 \
-            {                                                                                       \
-                const uint32_t offset = kzstdgpu_MaxCount_HuffmanWeightsOneDigitBits * (bitIdx) + (waveId) * 2;  \
-                zstdgpu_LdsStoreU32(storage + offset + 0, b.x);                                     \
-                zstdgpu_LdsStoreU32(storage + offset + 1, b.y);                                     \
-            }                                                                                       \
-            /* for some GPUs with 128-wide waves, store extra masks*/                               \
-            else                                                                                    \
-            {                                                                                       \
-                const uint32_t offset = kzstdgpu_MaxCount_HuffmanWeightsOneDigitBits * (bitIdx) + (waveId) * 4;  \
-                zstdgpu_LdsStoreU32(storage + offset + 0, b.x);                                     \
-                zstdgpu_LdsStoreU32(storage + offset + 1, b.y);                                     \
-                zstdgpu_LdsStoreU32(storage + offset + 2, b.z);                                     \
-                zstdgpu_LdsStoreU32(storage + offset + 3, b.w);                                     \
-            }                                                                                       \
-        }
-
     uint32_t waveOfs = waveIdx;
     const uint32_t weightCnt = weightCntMinusOne + 1;
     ZSTDGPU_FOR_WORK_ITEMS(weightId, weightCnt, threadId, kzstdgpu_TgSizeX_DecompressLiterals)
     {
-        const uint32_t weight = srt.inDecompressedHuffmanWeights[htTableIndex * kzstdgpu_MaxCount_HuffmanWeights + weightId];
+        const uint32_t weight = srt.inDecompressedHuffmanWeights[htIndex * kzstdgpu_MaxCount_HuffmanWeights + weightId];
 
         uint32_t bits = 0u;
         if (weightId < weightCntMinusOne)
@@ -2588,12 +3013,11 @@ static void zstdgpu_ShaderEntry_InitHuffmanTable_And_DecompressLiterals(ZSTDGPU_
 
         zstdgpu_LdsStoreU32(GS_Bits + weightId, bits);
 
-        zstdgpu_Store_VGPR_Bit_PerTg(laneCnt, GS_BitsMask, bits, waveOfs, 0);
-        zstdgpu_Store_VGPR_Bit_PerTg(laneCnt, GS_BitsMask, bits, waveOfs, 1);
-        zstdgpu_Store_VGPR_Bit_PerTg(laneCnt, GS_BitsMask, bits, waveOfs, 2);
-        zstdgpu_Store_VGPR_Bit_PerTg(laneCnt, GS_BitsMask, bits, waveOfs, 3);
-        zstdgpu_Store_VGPR_Bit_PerTg(laneCnt, GS_BitsMask, bits, waveOfs, 4);
-        #undef zstdgpu_Store_VGPR_Bit_PerTg
+        zstdgpu_GroupBallotLdsStore(laneCnt, bits, GS_BitsMask, kzstdgpu_MaxCount_HuffmanWeightsOneDigitBits, waveOfs, 0);
+        zstdgpu_GroupBallotLdsStore(laneCnt, bits, GS_BitsMask, kzstdgpu_MaxCount_HuffmanWeightsOneDigitBits, waveOfs, 1);
+        zstdgpu_GroupBallotLdsStore(laneCnt, bits, GS_BitsMask, kzstdgpu_MaxCount_HuffmanWeightsOneDigitBits, waveOfs, 2);
+        zstdgpu_GroupBallotLdsStore(laneCnt, bits, GS_BitsMask, kzstdgpu_MaxCount_HuffmanWeightsOneDigitBits, waveOfs, 3);
+        zstdgpu_GroupBallotLdsStore(laneCnt, bits, GS_BitsMask, kzstdgpu_MaxCount_HuffmanWeightsOneDigitBits, waveOfs, 4);
 
         const uint32_t bitsMaxPerWave = WaveActiveMax(bits);
 
@@ -2647,22 +3071,6 @@ static void zstdgpu_ShaderEntry_InitHuffmanTable_And_DecompressLiterals(ZSTDGPU_
         prevRankCountPrefix += rankCount;
     #endif
     }
-    // NOTE(pamartis): helper to determine the starting number of bits
-    #define zstdgpu_GetBitcnt(outNumBits, inState)                                      \
-        {                                                                               \
-            uint32_t rangeBase = 0;                                                     \
-            uint32_t rangeSize = bitsMax + 1u;                                          \
-                                                                                        \
-            while (rangeSize > 1)                                                       \
-            {                                                                           \
-                const uint32_t rangeTest = rangeSize >> 1;                              \
-                const uint32_t rangeNext = rangeBase + rangeTest;                       \
-                                                                                        \
-                rangeBase = inState < zstdgpu_LdsLoadU32(GS_RankIndex + rangeNext) ? rangeBase : rangeNext;\
-                rangeSize -= rangeTest;                                                 \
-            }                                                                           \
-            outNumBits = bitsMax - rangeBase;                                           \
-        }
 
     GroupMemoryBarrierWithGroupSync();
 
@@ -2706,25 +3114,7 @@ static void zstdgpu_ShaderEntry_InitHuffmanTable_And_DecompressLiterals(ZSTDGPU_
         zstdgpu_LdsStoreU32(GS_CodeAndSymbol + codePos, (weightId << 24) | (code & 0x00ffffffu));
     }
     const uint32_t codeTableSize = zstdgpu_LdsLoadU32(GS_RankCountPrefix + bitsMax);
-    const uint32_t maxBitcntMask = (1u << bitsMax) - 1u;
-
-    // NOTE(pamartis): helper to determine the symbol
-    #define zstdgpu_GetSymbol(outSymbol, inState)                                       \
-        {                                                                               \
-            uint32_t rangeBase = 0;                                                     \
-            uint32_t rangeSize = codeTableSize;                        \
-                                                                                        \
-            while (rangeSize > 1)                                                       \
-            {                                                                           \
-                const uint32_t rangeTest = rangeSize >> 1;                              \
-                const uint32_t rangeNext = rangeBase + rangeTest;                       \
-                                                                                        \
-                const uint32_t code = zstdgpu_LdsLoadU32(GS_CodeAndSymbol + rangeNext) & 0x00ffffffu;\
-                rangeBase = inState < code ? rangeBase : rangeNext;                     \
-                rangeSize -= rangeTest;                                                 \
-            }                                                                           \
-            outSymbol = zstdgpu_LdsLoadU32(GS_CodeAndSymbol + rangeBase) >> 24;         \
-        }
+#endif
 
     GroupMemoryBarrierWithGroupSync();
 
@@ -2734,32 +3124,76 @@ static void zstdgpu_ShaderEntry_InitHuffmanTable_And_DecompressLiterals(ZSTDGPU_
     // Expand Huffman Table
     ZSTDGPU_FOR_WORK_ITEMS(stateId, stateCnt, threadId, kzstdgpu_TgSizeX_DecompressLiterals)
     {
-        uint32_t symbol = 0;
-        uint32_t bitcnt = 0;
-        zstdgpu_GetSymbol(symbol, stateId);
-        zstdgpu_GetBitcnt(bitcnt, stateId);
-        #undef zstdgpu_GetSymbol
-        #undef zstdgpu_GetBitcnt
+        const uint32_t symbolIndex = zstdgpu_BinarySearchLds(GS_CodeAndSymbol, 0, codeTableSize, stateId, 0x00ffffffu);
+        const uint32_t bitcntIndex = zstdgpu_BinarySearchLds(GS_RankIndex, 0, bitsMax + 1, stateId, 0xffffffffu);
+        const uint32_t symbol = zstdgpu_LdsLoadU32(GS_CodeAndSymbol + symbolIndex) >> 24;
+        const uint32_t bitcnt = bitsMax - bitcntIndex;
+
         zstdgpu_LdsStoreU32(GS_HuffmanTable + stateId, (symbol << 16) | bitcnt);
     }
     GroupMemoryBarrierWithGroupSync();
 #endif
 
+    zstdgpu_DecompressHuffmanCompressedLiterals(
+        srt.inCompressedData,
+        srt.inLitStreamRemap,
+        srt.inLitRefs,
+        srt.inoutDecompressedLiterals,
+#if 1 // ASSUME_11BIT_HUFFMAN_CODES
+        GS_HuffmanTable,
+#else
+        GS_RankIndex,
+        GS_CodeAndSymbol,
+#endif
+        groupId,
+        threadId,
+        htGroupStart,
+        htLiteralStart,
+        htLiteralCount,
+        bitsMax,
+#if 0 // !ASSUME_11BIT_HUFFMAN_CODES
+        codeTableSize,
+#endif
+        kzstdgpu_TgSizeX_DecompressLiterals
+    );
+}
+
+void zstdgpu_DecompressHuffmanCompressedLiterals(ZSTDGPU_RO_BUFFER(uint32_t) CompressedData,
+                                                 ZSTDGPU_RO_BUFFER(uint32_t) LitStreamRemap,
+                                                 ZSTDGPU_RO_BUFFER(zstdgpu_LitStreamInfo) LitRefs,
+                                                 ZSTDGPU_RW_TYPED_BUFFER(uint32_t, uint8_t) DecompressedLiterals,
+#if 1 // ASSUME_11BIT_HUFFMAN_CODES
+                                                 ZSTDGPU_PARAM_LDS_IN(uint32_t) GS_HuffmanTable,
+#else
+                                                 ZSTDGPU_PARAM_LDS_IN(uint32_t) GS_RankIndex,
+                                                 ZSTDGPU_PARAM_LDS_IN(uint32_t) GS_CodeAndSymbol,
+#endif
+                                                 uint32_t groupId,
+                                                 uint32_t threadId,
+                                                 uint32_t htGroupStart,
+                                                 uint32_t htLiteralStart,
+                                                 uint32_t htLiteralCount,
+                                                 uint32_t bitsMax,
+#if 0 // !ASSUME_11BIT_HUFFMAN_CODES
+                                                 uint32_t codeTableSize,
+#endif
+                                                 uint32_t tgSize)
+{
+    ZSTDGPU_UNUSED(threadId);
+    const uint32_t maxBitcntMask = (1u << bitsMax) - 1u;
     //
     // The start of decompression of Huffman-compressed literals
     //
-    //const uint32_t literalIndex = (groupId - htGroupStart) * kzstdgpu_TgSizeX_DecompressLiterals + threadId;
-
-    const uint32_t thisGroupLiteralStart = (groupId - htGroupStart) * kzstdgpu_TgSizeX_DecompressLiterals;
-    const uint32_t thisGroupLiteralRemain = zstdgpu_MinU32(htLiteralCount - thisGroupLiteralStart, kzstdgpu_TgSizeX_DecompressLiterals);
-    ZSTDGPU_FOR_WORK_ITEMS(literalIndex, thisGroupLiteralRemain, threadId, kzstdgpu_TgSizeX_DecompressLiterals)
+    const uint32_t thisGroupLiteralStart = (groupId - htGroupStart) * tgSize;
+    const uint32_t thisGroupLiteralRemain = zstdgpu_MinU32(htLiteralCount - thisGroupLiteralStart, tgSize);
+    ZSTDGPU_FOR_WORK_ITEMS(literalIndex, thisGroupLiteralRemain, threadId, tgSize)
     {
-        const uint32_t literalStreamId = srt.inLitStreamRemap[htLiteralStart + thisGroupLiteralStart + literalIndex];
+        const uint32_t literalStreamId = LitStreamRemap[htLiteralStart + thisGroupLiteralStart + literalIndex];
 
-        zstdgpu_LitStreamInfo compressedLiteral = srt.inLitRefs[literalStreamId];
+        zstdgpu_LitStreamInfo compressedLiteral = LitRefs[literalStreamId];
 
         zstdgpu_Backward_BitBuffer_V0 bitBuffer;
-        zstdgpu_Backward_BitBuffer_V0_InitWithSegment(bitBuffer, srt.inCompressedData, compressedLiteral.src);
+        zstdgpu_Backward_BitBuffer_V0_InitWithSegment(bitBuffer, CompressedData, compressedLiteral.src);
 
         uint32_t state = zstdgpu_Backward_BitBuffer_V0_Get_Huffman(bitBuffer, bitsMax, bitsMax);
         uint32_t decodedByteCnt = 0;
@@ -2770,17 +3204,15 @@ static void zstdgpu_ShaderEntry_InitHuffmanTable_And_DecompressLiterals(ZSTDGPU_
             const uint32_t symbol = symbolAndBitcnt >> 16;
             const uint32_t bitcnt = symbolAndBitcnt & 0xffffu;
 #else
-            uint32_t symbol = 0;
-            uint32_t bitcnt = 0;
-            zstdgpu_GetSymbol(symbol, state);
-            zstdgpu_GetBitcnt(bitcnt, state);
-            #undef zstdgpu_GetSymbol
-            #undef zstdgpu_GetBitcnt
+            const uint32_t symbolIndex = zstdgpu_BinarySearchLds(GS_CodeAndSymbol, 0, codeTableSize, state, 0x00ffffffu);
+            const uint32_t bitcntIndex = zstdgpu_BinarySearchLds(GS_RankIndex, 0, bitsMax + 1, state, 0xffffffffu);
+            const uint32_t symbol = zstdgpu_LdsLoadU32(GS_CodeAndSymbol + symbolIndex) >> 24;
+            const uint32_t bitcnt = bitsMax - bitcntIndex;
 #endif
 
             // FIXME/TODO(pamartis): Experiment with storing data to LDS first (we have some allocated but unused)
             // and then to memory. At least try small LDS cache of 32-dwords per literal
-            zstdgpu_TypedStoreU8(srt.inoutDecompressedLiterals, compressedLiteral.dst.offs + decodedByteCnt++, symbol);
+            zstdgpu_TypedStoreU8(DecompressedLiterals, compressedLiteral.dst.offs + decodedByteCnt++, symbol);
 
             if (zstdgpu_Backward_BitBuffer_V0_CanRefill_Huffman(bitBuffer, bitcnt))
             {

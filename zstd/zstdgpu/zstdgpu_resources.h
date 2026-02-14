@@ -98,7 +98,10 @@
     ZSTDGPU_BUFFER(zstdgpu_OffsetAndSize                    , BlocksRAWRefs                 )   \
     ZSTDGPU_BUFFER(zstdgpu_OffsetAndSize                    , BlocksCMPRefs                 )
 
-#define ZSTDGPU_BUFFERS_LIST_STAGE_1() /* empty so far*/
+#define ZSTDGPU_BUFFERS_LIST_STAGE_1() \
+    ZSTDGPU_BUFFER(uint32_t                                 , HuffmanTableCodeAndSymbol     )   \
+    ZSTDGPU_BUFFER(uint32_t                                 , HuffmanTableRankIndex         )   \
+    ZSTDGPU_BUFFER(uint32_t                                 , HuffmanTableInfo              )
 
 #define ZSTDGPU_ALL_BUFFERS_LIST_STAGE_0()     \
     ZSTDGPU_BUFFERS_LIST_UPLOAD_STAGE_0()      \
@@ -315,6 +318,10 @@ static void zstdgpu_ResourceInfo_Stage_1_InitSize(zstdgpu_ResourceInfo *outInfo,
     const uint32_t LitGroupEndPerHuffmanTable_Count = LitStreamEndPerHuffmanTable_Count;
     const uint32_t BlockSeqCountPrefixLookback_Count = TableIndexLookback_Count;
     const uint32_t SeqCountPrefixLookback_Count = TableIndexLookback_Count;
+
+    const uint32_t HuffmanTableCodeAndSymbol_Count = kzstdgpu_MaxCount_HuffmanWeights * cmpBlockCount;
+    const uint32_t HuffmanTableRankIndex_Count = kzstdgpu_MaxCount_HuffmanWeightRanks * cmpBlockCount;
+    const uint32_t HuffmanTableInfo_Count = cmpBlockCount;
 
     ZSTDGPU_ALL_BUFFERS_LIST_STAGE_1()
 }
