@@ -22,6 +22,7 @@
 struct Consts
 {
     uint32_t elemToPrefixCount;
+    uint32_t literalsPerGroup;
 };
 
 ConstantBuffer<Consts>          Constants                           : register(b0);
@@ -37,7 +38,7 @@ RWStructuredBuffer<uint32_t>    ZstdLitGroupCountToPrefixLookback   : register(u
 
 RWStructuredBuffer<uint32_t>    ZstdCounters                        : register(u4);
 
-[RootSignature("UAV(u0), UAV(u1), UAV(u2), UAV(u3), UAV(u4), RootConstants(b0, num32BitConstants=1)")]
+[RootSignature("UAV(u0), UAV(u1), UAV(u2), UAV(u3), UAV(u4), RootConstants(b0, num32BitConstants=2)")]
 [numthreads(kzstdgpu_TgSizeX_PrefixSum_LiteralCount, 1, 1)]
 void main(uint i : SV_DispatchThreadId)
 {
@@ -51,7 +52,7 @@ void main(uint i : SV_DispatchThreadId)
     const uint32_t lastLocalIndex = WaveActiveCountBits(true) - 1u;
 
     const uint32_t streamCount = ZstdLitStreamCountToPrefix[i];
-    const uint32_t groupCount = ZSTDGPU_TG_COUNT(streamCount, kzstdgpu_TgSizeX_DecompressLiterals);
+    const uint32_t groupCount = ZSTDGPU_TG_COUNT(streamCount, Constants.literalsPerGroup);
 
     const uint32_t streamPrefix = WavePrefixSum(streamCount);
     const uint32_t groupPrefix = WavePrefixSum(groupCount);

@@ -2785,6 +2785,23 @@ static inline void zstdgpu_DecompressHuffmanCompressedLiterals(ZSTDGPU_RO_RAW_BU
                                                                uint32_t bitsMax,
                                                                uint32_t tgSize);
 
+static inline void zstdgpu_DecompressHuffmanCompressedLiterals_StoreLdsCache(ZSTDGPU_RO_RAW_BUFFER(uint32_t) CompressedData,
+                                                                                    ZSTDGPU_RO_BUFFER(uint32_t) LitStreamRemap,
+                                                                                    ZSTDGPU_RO_BUFFER(zstdgpu_LitStreamInfo) LitRefs,
+                                                                                    ZSTDGPU_RW_TYPED_BUFFER(uint32_t, uint8_t) DecompressedLiterals,
+                                                                                    ZSTDGPU_RW_BUFFER(uint32_t) DecompressedLiteralsAsDwords,
+                                                                                    ZSTDGPU_PARAM_LDS_IN(uint32_t) GS_HuffmanTable,
+                                                                                    ZSTDGPU_PARAM_LDS_INOUT(uint32_t) GS_LiteralStoreCache,
+                                                                                    uint32_t groupId,
+                                                                                    uint32_t threadId,
+                                                                                    uint32_t htGroupStart,
+                                                                                    uint32_t htLiteralStart,
+                                                                                    uint32_t htLiteralCount,
+                                                                                    uint32_t bitsMax,
+                                                                                    uint32_t tgSize,
+                                                                                    uint32_t streamsPerGroup,
+                                                                                    uint32_t cacheDwordsPerStream);
+
 
 static void zstdgpu_ConvertThreadgroupIdToDecompressLiteralsInputs(ZSTDGPU_RO_BUFFER(uint32_t) LitGroupEndPerHuffmanTable,
                                                                    ZSTDGPU_RO_BUFFER(uint32_t) LitStreamEndPerHuffmanTable,
@@ -2839,7 +2856,7 @@ static void zstdgpu_ConvertThreadgroupIdToDecompressLiteralsInputs(ZSTDGPU_RO_BU
 #define ZSTDGPU_DECOMPRESS_LITERALS_LDS(base, size) \
     ZSTDGPU_LDS_SIZE(size)                          \
     ZSTDGPU_LDS_BASE(base)                          \
-    ZSTDGPU_LDS_REGION(HuffmanTable, kzstdgpu_MaxCount_HuffmanTableExpandedUInts)
+    ZSTDGPU_LDS_REGION(HuffmanTable, 1u << (kzstdgpu_MaxCount_HuffmanWeightBits - 1))
 
 #include "zstdgpu_lds_decl_size.h"
 ZSTDGPU_DECOMPRESS_LITERALS_LDS(0, DecompressLiterals);
@@ -2872,17 +2889,33 @@ static void zstdgpu_ShaderEntry_DecompressLiterals(ZSTDGPU_PARAM_INOUT(zstdgpu_D
     const uint32_t bitsMax = htInfo >> 16;
     const uint32_t codeTableSize = htInfo & 0xffffu;
     const uint32_t stateCnt = WaveReadLaneFirst(srt.inHuffmanTableRankIndex[htIndex * kzstdgpu_MaxCount_HuffmanWeightRanks + bitsMax]);
+    const uint32_t statePairCnt = stateCnt >> 1u;
 
-    // Expand Huffman Table
-    ZSTDGPU_FOR_WORK_ITEMS(stateId, stateCnt, threadId, kzstdgpu_TgSizeX_DecompressLiterals)
+    // Expand Huffman Table, pack 2 entries into single dword
+    ZSTDGPU_FOR_WORK_ITEMS(statePairId, statePairCnt, threadId, tgSize)
     {
-        const uint32_t symbolIndex = zstdgpu_BinarySearchMasked(srt.inHuffmanTableCodeAndSymbol, htIndex * kzstdgpu_MaxCount_HuffmanWeights, codeTableSize, stateId, 0x00ffffffu);
-        const uint32_t bitcntIndex = zstdgpu_BinarySearchMasked(srt.inHuffmanTableRankIndex, htIndex * kzstdgpu_MaxCount_HuffmanWeightRanks, bitsMax + 1, stateId, 0xffffffffu)
-                                   - htIndex * kzstdgpu_MaxCount_HuffmanWeightRanks;
-        const uint32_t symbol = srt.inHuffmanTableCodeAndSymbol[symbolIndex] >> 24;
-        const uint32_t bitcnt = bitsMax - bitcntIndex;
+        const uint32_t stateId0 = statePairId << 1u;
+        const uint32_t stateId1 = stateId0 + 1u;
 
-        zstdgpu_LdsStoreU32(GS_HuffmanTable + stateId, (symbol << 16) | bitcnt);
+        const uint32_t symbolIndex0 = zstdgpu_BinarySearchMasked(srt.inHuffmanTableCodeAndSymbol, htIndex * kzstdgpu_MaxCount_HuffmanWeights, codeTableSize, stateId0, 0x00ffffffu);
+        const uint32_t symbolIndex1 = zstdgpu_BinarySearchMasked(srt.inHuffmanTableCodeAndSymbol, htIndex * kzstdgpu_MaxCount_HuffmanWeights, codeTableSize, stateId1, 0x00ffffffu);
+
+        const uint32_t bitcntIndex0 = zstdgpu_BinarySearchMasked(srt.inHuffmanTableRankIndex, htIndex * kzstdgpu_MaxCount_HuffmanWeightRanks, bitsMax + 1, stateId0, 0xffffffffu)
+                                    - htIndex * kzstdgpu_MaxCount_HuffmanWeightRanks;
+
+        const uint32_t bitcntIndex1 = zstdgpu_BinarySearchMasked(srt.inHuffmanTableRankIndex, htIndex * kzstdgpu_MaxCount_HuffmanWeightRanks, bitsMax + 1, stateId1, 0xffffffffu)
+                                    - htIndex * kzstdgpu_MaxCount_HuffmanWeightRanks;
+
+        const uint32_t symbol0 = srt.inHuffmanTableCodeAndSymbol[symbolIndex0] >> 24;
+        const uint32_t bitcnt0 = bitsMax - bitcntIndex0;
+
+        const uint32_t symbol1 = srt.inHuffmanTableCodeAndSymbol[symbolIndex1] >> 24;
+        const uint32_t bitcnt1 = bitsMax - bitcntIndex1;
+
+        const uint32_t symbolAndBitcnt0 = (symbol0 << 8) | bitcnt0;
+        const uint32_t symbolAndBitcnt1 = (symbol1 << 8) | bitcnt1;
+
+        zstdgpu_LdsStoreU32(GS_HuffmanTable + statePairId, (symbolAndBitcnt1 << 16) | symbolAndBitcnt0);
     }
     GroupMemoryBarrierWithGroupSync();
 
@@ -2900,6 +2933,7 @@ static void zstdgpu_ShaderEntry_DecompressLiterals(ZSTDGPU_PARAM_INOUT(zstdgpu_D
         bitsMax,
         tgSize
     );
+
 }
 
 // LDS partitioning macro lists for combined Huffman Table Initialisation + Literal Decompression
@@ -2909,7 +2943,7 @@ static void zstdgpu_ShaderEntry_DecompressLiterals(ZSTDGPU_PARAM_INOUT(zstdgpu_D
     ZSTDGPU_LDS_REGION(CodeAndSymbol   , kzstdgpu_MaxCount_HuffmanWeights)          \
     ZSTDGPU_LDS_REGION(PreInit         , kzstdgpu_PreInitHuffmanTable_LdsSize)      \
     ZSTDGPU_LDS_REGION(RankIndex       , kzstdgpu_MaxCount_HuffmanWeightRanks)      \
-    ZSTDGPU_LDS_REGION(HuffmanTable    , kzstdgpu_MaxCount_HuffmanTableExpandedUInts)
+    ZSTDGPU_LDS_REGION(HuffmanTable    , 1u << kzstdgpu_MaxCount_HuffmanWeightBits)
 
 #include "zstdgpu_lds_decl_size.h"
 ZSTDGPU_INIT_HUFFMAN_TABLE_AND_DECOMPRESS_LITERALS_LDS(0, InitHuffmanTableAndDecompressLiterals);
@@ -2999,9 +3033,11 @@ static inline void zstdgpu_SampleHuffmanSymbolAndBitcnt(ZSTDGPU_PARAM_INOUT(uint
                                                         ZSTDGPU_PARAM_IN(uint32_t) state,
                                                         ZSTDGPU_PARAM_LDS_IN(uint32_t) GS_HuffmanTable)
 {
-    const uint32_t symbolAndBitcnt = zstdgpu_LdsLoadU32(GS_HuffmanTable + state);
-    symbol = symbolAndBitcnt >> 16;
-    bitcnt = symbolAndBitcnt & 0xffffu;
+    const uint32_t statePairId = state >> 1;
+    const uint32_t stateIdInPair = state & 0x1u;
+    const uint32_t symbolAndBitcnt = zstdgpu_LdsLoadU32(GS_HuffmanTable + statePairId) >> (stateIdInPair << 4u);
+    symbol = (symbolAndBitcnt >> 8) & 0xffu;
+    bitcnt = symbolAndBitcnt & 0xffu;
 }
 
 void zstdgpu_DecompressHuffmanCompressedLiterals(ZSTDGPU_RO_RAW_BUFFER(uint32_t) CompressedData,
@@ -3078,6 +3114,175 @@ void zstdgpu_DecompressHuffmanCompressedLiterals(ZSTDGPU_RO_RAW_BUFFER(uint32_t)
             } while (decodedByteCnt < compressedLiteral.dst.size);
         }
 #endif
+    }
+}
+
+void zstdgpu_DecompressHuffmanCompressedLiterals_StoreLdsCache(ZSTDGPU_RO_RAW_BUFFER(uint32_t) CompressedData,
+                                                                       ZSTDGPU_RO_BUFFER(uint32_t) LitStreamRemap,
+                                                                       ZSTDGPU_RO_BUFFER(zstdgpu_LitStreamInfo) LitRefs,
+                                                                       ZSTDGPU_RW_TYPED_BUFFER(uint32_t, uint8_t) DecompressedLiterals,
+                                                                       ZSTDGPU_RW_BUFFER(uint32_t) DecompressedLiteralsAsDwords,
+                                                                       ZSTDGPU_PARAM_LDS_IN(uint32_t) GS_HuffmanTable,
+                                                                       ZSTDGPU_PARAM_LDS_INOUT(uint32_t) GS_LiteralStoreCache,
+                                                                       uint32_t groupId,
+                                                                       uint32_t threadId,
+                                                                       uint32_t htGroupStart,
+                                                                       uint32_t htLiteralStart,
+                                                                       uint32_t htLiteralCount,
+                                                                       uint32_t bitsMax,
+                                                                       uint32_t tgSize,
+                                                                       uint32_t streamsPerGroup,
+                                                                       uint32_t cacheDwordsPerStream)
+{
+    ZSTDGPU_UNUSED(threadId);
+    const uint32_t maxBitcntMask = (1u << bitsMax) - 1u;
+    //
+    // The start of decompression of Huffman-compressed literals
+    //
+    const uint32_t thisGroupLiteralStart = (groupId - htGroupStart) * streamsPerGroup;
+    const uint32_t thisGroupLiteralRemain = zstdgpu_MinU32(htLiteralCount - thisGroupLiteralStart, streamsPerGroup);
+
+    zstdgpu_HuffmanStream stream;
+
+    uint32_t byteAlignedBeg = 0;
+    uint32_t byteAlignedEnd = 0;
+    uint32_t dwordAlignedEnd = 0;
+    uint32_t dwordAlignedBeg = 0;
+
+    ZSTDGPU_BRANCH if (threadId < thisGroupLiteralRemain)
+    {
+        const uint32_t literalStreamId = LitStreamRemap[htLiteralStart + thisGroupLiteralStart + threadId];
+        zstdgpu_LitStreamInfo compressedLiteral = LitRefs[literalStreamId];
+        if (compressedLiteral.dst.size != 0) // derived from block Regenerated_Size
+        {
+            zstdgpu_HuffmanStream_InitWithSegment(stream, CompressedData, compressedLiteral.src, bitsMax);
+        }
+
+        byteAlignedBeg = compressedLiteral.dst.offs;
+        byteAlignedEnd = byteAlignedBeg + compressedLiteral.dst.size;
+        dwordAlignedEnd = zstdgpu_MaxU32(byteAlignedBeg, byteAlignedEnd & ~3u);
+        dwordAlignedBeg = zstdgpu_MinU32((byteAlignedBeg + 3u) & ~3u, dwordAlignedEnd);
+    }
+
+    uint32_t symbol = 0;
+    uint32_t bitcnt = 0;
+    uint32_t state = 0;
+
+    // Handle head bytes (up to 3 bytes before the first dword-aligned address)
+    ZSTDGPU_BRANCH if (byteAlignedBeg < dwordAlignedBeg)
+    {
+        state = zstdgpu_HuffmanStream_RefillAndPeek(stream);
+        zstdgpu_SampleHuffmanSymbolAndBitcnt(symbol, bitcnt, state, GS_HuffmanTable);
+        zstdgpu_TypedStoreU8(DecompressedLiterals, byteAlignedBeg ++, symbol);
+        zstdgpu_HuffmanStream_Consume(stream, bitcnt);
+
+        ZSTDGPU_BRANCH if (byteAlignedBeg < dwordAlignedBeg)
+        {
+            state = zstdgpu_HuffmanStream_RefillAndPeek(stream);
+            zstdgpu_SampleHuffmanSymbolAndBitcnt(symbol, bitcnt, state, GS_HuffmanTable);
+            zstdgpu_TypedStoreU8(DecompressedLiterals, byteAlignedBeg ++, symbol);
+            zstdgpu_HuffmanStream_Consume(stream, bitcnt);
+
+            ZSTDGPU_BRANCH if (byteAlignedBeg < dwordAlignedBeg)
+            {
+                state = zstdgpu_HuffmanStream_RefillAndPeek(stream);
+                zstdgpu_SampleHuffmanSymbolAndBitcnt(symbol, bitcnt, state, GS_HuffmanTable);
+                zstdgpu_TypedStoreU8(DecompressedLiterals, byteAlignedBeg ++, symbol);
+                zstdgpu_HuffmanStream_Consume(stream, bitcnt);
+            }
+        }
+    }
+
+    const uint32_t kStoreCacheBankCount = 32;
+    const uint32_t kStoreCacheBankMask = kStoreCacheBankCount - 1u;
+
+    const uint32_t storeCacheThreadOffset = threadId * cacheDwordsPerStream;
+
+    const uint32_t dwordIdxBeg = dwordAlignedBeg >> 2;
+    const uint32_t dwordIdxEnd = dwordAlignedEnd >> 2;
+    uint32_t dwordIdx = dwordIdxBeg;
+
+    do
+    {
+        const uint32_t dwordIdxBatchBeg = dwordIdx;
+        const uint32_t dwordIdxBatchEnd = zstdgpu_MinU32(dwordIdx + cacheDwordsPerStream, dwordIdxEnd);
+
+        // Populate LDS cache of at most 'cacheDwordsPerStream' dwords per stream
+        for (; dwordIdx < dwordIdxBatchEnd; ++dwordIdx)
+        {
+            uint32_t dword = 0;
+            state = zstdgpu_HuffmanStream_RefillAndPeek(stream);
+            zstdgpu_SampleHuffmanSymbolAndBitcnt(symbol, bitcnt, state, GS_HuffmanTable);
+            dword |= symbol;
+            zstdgpu_HuffmanStream_Consume(stream, bitcnt);
+
+            state = zstdgpu_HuffmanStream_RefillAndPeek(stream);
+            zstdgpu_SampleHuffmanSymbolAndBitcnt(symbol, bitcnt, state, GS_HuffmanTable);
+            dword |= symbol << 8;
+            zstdgpu_HuffmanStream_Consume(stream, bitcnt);
+
+            state = zstdgpu_HuffmanStream_RefillAndPeek(stream);
+            zstdgpu_SampleHuffmanSymbolAndBitcnt(symbol, bitcnt, state, GS_HuffmanTable);
+            dword |= symbol << 16;
+            zstdgpu_HuffmanStream_Consume(stream, bitcnt);
+
+            state = zstdgpu_HuffmanStream_RefillAndPeek(stream);
+            zstdgpu_SampleHuffmanSymbolAndBitcnt(symbol, bitcnt, state, GS_HuffmanTable);
+            dword |= symbol << 24;
+            zstdgpu_HuffmanStream_Consume(stream, bitcnt);
+
+            const uint32_t dwordIdxInBatch = dwordIdx - dwordIdxBatchBeg;
+
+            // add 'threadId' to 'dwordIdx' to make sure there's no bank conflicts.
+            const uint32_t dwordIdxInCache = (dwordIdxInBatch & ~kStoreCacheBankMask) + ((dwordIdxInBatch + threadId) & kStoreCacheBankMask);
+            zstdgpu_LdsStoreU32(GS_LiteralStoreCache + storeCacheThreadOffset + dwordIdxInCache, dword);
+        }
+        // Ensure all threads' LDS cache writes are visible before cooperative read
+        GroupMemoryBarrierWithGroupSync();
+
+        // Move at most `cacheDwordsPerStream` dwords from LDS cache to memory using the entire threadgroup.
+        for (uint32_t i = 0; i < thisGroupLiteralRemain; ++i)
+        {
+            const uint32_t dwordCntInBatch = WaveReadLaneAt(dwordIdxBatchEnd - dwordIdxBatchBeg, i);
+            const uint32_t dstDwordIdx = WaveReadLaneAt(dwordIdxBatchBeg, i);
+
+            ZSTDGPU_FOR_WORK_ITEMS(dwordIdxToStore, dwordCntInBatch, threadId, tgSize)
+            {
+                // Inverse of the store swizzle: thread i stored logical dword d at cache position ((d + i) & mask)
+                const uint32_t dwordIdxInCache = (dwordIdxToStore & ~kStoreCacheBankMask) + ((dwordIdxToStore + i) & kStoreCacheBankMask);
+                const uint32_t dword = zstdgpu_LdsLoadU32(GS_LiteralStoreCache + i * cacheDwordsPerStream + dwordIdxInCache);
+
+                DecompressedLiteralsAsDwords[dstDwordIdx + dwordIdxToStore] = dword;
+            }
+        }
+    }
+    while (WaveActiveAnyTrue(dwordIdx < dwordIdxEnd));
+
+    // Handle tail bytes (up to 3 bytes after the last dword-aligned address)
+    ZSTDGPU_BRANCH if (dwordAlignedEnd < byteAlignedEnd)
+    {
+        uint32_t tailByte = dwordAlignedEnd;
+
+        state = zstdgpu_HuffmanStream_RefillAndPeek(stream);
+        zstdgpu_SampleHuffmanSymbolAndBitcnt(symbol, bitcnt, state, GS_HuffmanTable);
+        zstdgpu_TypedStoreU8(DecompressedLiterals, tailByte ++, symbol);
+        zstdgpu_HuffmanStream_Consume(stream, bitcnt);
+
+        ZSTDGPU_BRANCH if (tailByte < byteAlignedEnd)
+        {
+            state = zstdgpu_HuffmanStream_RefillAndPeek(stream);
+            zstdgpu_SampleHuffmanSymbolAndBitcnt(symbol, bitcnt, state, GS_HuffmanTable);
+            zstdgpu_TypedStoreU8(DecompressedLiterals, tailByte ++, symbol);
+            zstdgpu_HuffmanStream_Consume(stream, bitcnt);
+
+            ZSTDGPU_BRANCH if (tailByte < byteAlignedEnd)
+            {
+                state = zstdgpu_HuffmanStream_RefillAndPeek(stream);
+                zstdgpu_SampleHuffmanSymbolAndBitcnt(symbol, bitcnt, state, GS_HuffmanTable);
+                zstdgpu_TypedStoreU8(DecompressedLiterals, tailByte ++, symbol);
+                zstdgpu_HuffmanStream_Consume(stream, bitcnt);
+            }
+        }
     }
 }
 

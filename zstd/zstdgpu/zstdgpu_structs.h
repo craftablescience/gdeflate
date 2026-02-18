@@ -158,7 +158,6 @@ static const uint32_t kzstdgpu_MaxCount_HuffmanWeightBits           = 16;
 static const uint32_t kzstdgpu_MaxCount_HuffmanWeightRanks          = kzstdgpu_MaxCount_HuffmanWeightBits + 1;
 static const uint32_t kzstdgpu_MaxCount_HuffmanWeightsOneDigitBits  = kzstdgpu_MaxCount_HuffmanWeights / 32;
 static const uint32_t kzstdgpu_MaxCount_HuffmanWeightsAllDigitBits  = kzstdgpu_MaxCount_HuffmanWeightsOneDigitBits * 5;
-static const uint32_t kzstdgpu_MaxCount_HuffmanTableExpandedUInts   = 2048;
 
 static const uint32_t kzstdgpu_MaxCount_FseProbs = 256;
 

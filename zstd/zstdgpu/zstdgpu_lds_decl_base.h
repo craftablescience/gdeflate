@@ -26,5 +26,5 @@
 #endif
 
 #define ZSTDGPU_LDS_REGION(name, size)  zstdgpu_lds_uintptr_t GS_##name = GS_Base;  \
-                                        GS_Base += size;
+                                        GS_Base += (size);
 

@@ -39,6 +39,12 @@
 #include "ZstdGpuDecodeHuffmanWeights.h"
 #include "ZstdGpuDecompressHuffmanWeights.h"
 #include "ZstdGpuDecompressLiterals.h"
+#include "ZstdGpuDecompressLiterals_LdsStoreCache128_8.h"
+#include "ZstdGpuDecompressLiterals_LdsStoreCache64_16.h"
+#include "ZstdGpuDecompressLiterals_LdsStoreCache64_8.h"
+#include "ZstdGpuDecompressLiterals_LdsStoreCache32_32.h"
+#include "ZstdGpuDecompressLiterals_LdsStoreCache32_16.h"
+#include "ZstdGpuDecompressLiterals_LdsStoreCache32_8.h"
 #include "ZstdGpuDecompressSequences.h"
 #include "ZstdGpuDecompressSequences_LdsFseCache128.h"
 #include "ZstdGpuDecompressSequences_LdsFseCache64.h"
@@ -302,31 +308,37 @@ static void zstdgpu_ReCreate_SRTs(zstdgpu_SRTs & srts, ID3D12Device *device, con
     #undef ZSTDGPU_RO_RAW_BUFFER_DECL
 }
 
-#define ZSTDGPU_KERNEL_LIST()                                                                                                       \
-    ZSTDGPU_KERNEL(ComputeDestSequenceOffsets               , L"Compute Destination Sequence Offsets")                              \
-    ZSTDGPU_KERNEL(ComputePrefixSum                         , L"Compute Prefix of Literal and TG Count for Literal Decompression")  \
-    ZSTDGPU_KERNEL(DecodeHuffmanWeights                     , L"Decode (from nibbles) Uncompressed Huffman Weights")                \
-    ZSTDGPU_KERNEL(DecompressHuffmanWeights                 , L"Decompress FSE-compressed Huffman Weights")                         \
-    ZSTDGPU_KERNEL(DecompressLiterals                       , L"Decompress Literals")                                               \
-    ZSTDGPU_KERNEL(DecompressSequences                      , L"Decompress Sequences")                                              \
-    ZSTDGPU_KERNEL(DecompressSequences_LdsFseCache128      , L"Decompress Sequences (LDS FSE Cache 128)")                           \
-    ZSTDGPU_KERNEL(DecompressSequences_LdsFseCache64       , L"Decompress Sequences (LDS FSE Cache 64)")                            \
-    ZSTDGPU_KERNEL(DecompressSequences_LdsFseCache32       , L"Decompress Sequences (LDS FSE Cache 32)")                            \
-    ZSTDGPU_KERNEL(ExecuteSequences128                      , L"Execute Sequences 128")                                             \
-    ZSTDGPU_KERNEL(ExecuteSequences64                       , L"Execute Sequences 64")                                              \
-    ZSTDGPU_KERNEL(ExecuteSequences32                       , L"Execute Sequences 32")                                              \
-    ZSTDGPU_KERNEL(FinaliseSequenceOffsets                  , L"Finalise Sequence Offsets")                                         \
-    ZSTDGPU_KERNEL(GroupCompressedLiterals                  , L"Group Huffman-compressed Literals")                                 \
-    ZSTDGPU_KERNEL(InitFseTable                             , L"Init Fse Table")                                                    \
-    ZSTDGPU_KERNEL(InitHuffmanTable                         , L"Init Huffman Table")                                                \
-    ZSTDGPU_KERNEL(InitHuffmanTableAndDecompressLiterals    , L"Init Huffman Table and Decompress Literals")                        \
-    ZSTDGPU_KERNEL(InitResources                            , L"Init Resources")                                                    \
-    ZSTDGPU_KERNEL(MemsetMemcpy                             , L"Memset-Memcpy")                                                     \
-    ZSTDGPU_KERNEL(ParseCompressedBlocks                    , L"Parse Compressed Blocks")                                           \
-    ZSTDGPU_KERNEL(ParseFrames                              , L"Parse Frames")                                                      \
-    ZSTDGPU_KERNEL(PrefixSequenceOffsets                    , L"Prefix Sequence Offsets")                                           \
-    ZSTDGPU_KERNEL(PrefixSum                                , L"Prefix Sum")                                                        \
-    ZSTDGPU_KERNEL(UpdateDispatchArgs                       , L"Update Dispatch Args")
+#define ZSTDGPU_KERNEL_LIST()                                                                                                           \
+    ZSTDGPU_KERNEL(ComputeDestSequenceOffsets               ,   L"Compute Destination Sequence Offsets")                                \
+    ZSTDGPU_KERNEL(ComputePrefixSum                         ,   L"Compute Prefix of Literal and TG Count for Literal Decompression")    \
+    ZSTDGPU_KERNEL(DecodeHuffmanWeights                     ,   L"Decode (from nibbles) Uncompressed Huffman Weights")                  \
+    ZSTDGPU_KERNEL(DecompressHuffmanWeights                 ,   L"Decompress FSE-compressed Huffman Weights")                           \
+    ZSTDGPU_KERNEL(DecompressLiterals                       ,   L"Decompress Literals")                                                 \
+    ZSTDGPU_KERNEL(DecompressLiterals_LdsStoreCache128_8    ,   L"Decompress Literals (LDS Store Cache=128 Dwords, Stream Count= 8)")   \
+    ZSTDGPU_KERNEL(DecompressLiterals_LdsStoreCache64_16    ,   L"Decompress Literals (LDS Store Cache= 64 Dwords, Stream Count=16)")   \
+    ZSTDGPU_KERNEL(DecompressLiterals_LdsStoreCache64_8     ,   L"Decompress Literals (LDS Store Cache= 64 Dwords, Stream Count= 8)")   \
+    ZSTDGPU_KERNEL(DecompressLiterals_LdsStoreCache32_32    ,   L"Decompress Literals (LDS Store Cache= 32 Dwords, Stream Count=32)")   \
+    ZSTDGPU_KERNEL(DecompressLiterals_LdsStoreCache32_16    ,   L"Decompress Literals (LDS Store Cache= 32 Dwords, Stream Count=16)")   \
+    ZSTDGPU_KERNEL(DecompressLiterals_LdsStoreCache32_8     ,   L"Decompress Literals (LDS Store Cache= 32 Dwords, Stream Count= 8)")   \
+    ZSTDGPU_KERNEL(DecompressSequences                      ,   L"Decompress Sequences")                                                \
+    ZSTDGPU_KERNEL(DecompressSequences_LdsFseCache128       ,   L"Decompress Sequences (LDS FSE Cache, TG Size= 128)")                  \
+    ZSTDGPU_KERNEL(DecompressSequences_LdsFseCache64        ,   L"Decompress Sequences (LDS FSE Cache, TG Size=  64)")                  \
+    ZSTDGPU_KERNEL(DecompressSequences_LdsFseCache32        ,   L"Decompress Sequences (LDS FSE Cache, TG Size=  32)")                  \
+    ZSTDGPU_KERNEL(ExecuteSequences128                      ,   L"Execute Sequences 128")                                               \
+    ZSTDGPU_KERNEL(ExecuteSequences64                       ,   L"Execute Sequences 64")                                                \
+    ZSTDGPU_KERNEL(ExecuteSequences32                       ,   L"Execute Sequences 32")                                                \
+    ZSTDGPU_KERNEL(FinaliseSequenceOffsets                  ,   L"Finalise Sequence Offsets")                                           \
+    ZSTDGPU_KERNEL(GroupCompressedLiterals                  ,   L"Group Huffman-compressed Literals")                                   \
+    ZSTDGPU_KERNEL(InitFseTable                             ,   L"Init Fse Table")                                                      \
+    ZSTDGPU_KERNEL(InitHuffmanTable                         ,   L"Init Huffman Table")                                                  \
+    ZSTDGPU_KERNEL(InitHuffmanTableAndDecompressLiterals    ,   L"Init Huffman Table and Decompress Literals")                          \
+    ZSTDGPU_KERNEL(InitResources                            ,   L"Init Resources")                                                      \
+    ZSTDGPU_KERNEL(MemsetMemcpy                             ,   L"Memset-Memcpy")                                                       \
+    ZSTDGPU_KERNEL(ParseCompressedBlocks                    ,   L"Parse Compressed Blocks")                                             \
+    ZSTDGPU_KERNEL(ParseFrames                              ,   L"Parse Frames")                                                        \
+    ZSTDGPU_KERNEL(PrefixSequenceOffsets                    ,   L"Prefix Sequence Offsets")                                             \
+    ZSTDGPU_KERNEL(PrefixSum                                ,   L"Prefix Sum")                                                          \
+    ZSTDGPU_KERNEL(UpdateDispatchArgs                       ,   L"Update Dispatch Args")
 
 #define ZSTDGPU_KERNEL_SCOPE_LIST_STAGE_0() \
     ZSTDGPU_KERNEL_SCOPE_X(InitResources_CountBlocks            , L"Init Resources"             )   \
@@ -398,6 +410,8 @@ struct zstdgpu_PerRequestContextImpl
     #undef ZSTDGPU_KERNEL
     d3d12aid_ComputeRsPs    ExecuteSequences;
     d3d12aid_ComputeRsPs    DecompressSequences_LdsFseCache;
+    d3d12aid_ComputeRsPs    DecompressLiterals_LdsStoreCache;
+    uint32_t                DecompressLiterals_LdsStoreCache_StreamsPerGroup;
 
     zstdgpu_SRTs            srts;
     zstdgpu_ResourceDataGpu resData;
@@ -559,21 +573,29 @@ zstdgpu_Status zstdgpu_CreatePerRequestContext(zstdgpu_PerRequestContext *outPer
 #ifdef _GAMING_XBOX_SCARLETT
         context->ExecuteSequences = context->ExecuteSequences64;
         context->DecompressSequences_LdsFseCache = context->DecompressSequences_LdsFseCache32;
+        context->DecompressLiterals_LdsStoreCache = context->DecompressLiterals_LdsStoreCache32_16;
+        context->DecompressLiterals_LdsStoreCache_StreamsPerGroup = 16;
 #else
         if (persistentContext->maxLaneCount == 128)
         {
             context->ExecuteSequences = context->ExecuteSequences128;
             context->DecompressSequences_LdsFseCache = context->DecompressSequences_LdsFseCache128;
+            context->DecompressLiterals_LdsStoreCache = context->DecompressLiterals_LdsStoreCache128_8;
+            context->DecompressLiterals_LdsStoreCache_StreamsPerGroup = 8;
         }
         else if (persistentContext->maxLaneCount == 64)
         {
             context->ExecuteSequences = context->ExecuteSequences64;
             context->DecompressSequences_LdsFseCache = context->DecompressSequences_LdsFseCache64;
+            context->DecompressLiterals_LdsStoreCache = context->DecompressLiterals_LdsStoreCache64_16;
+            context->DecompressLiterals_LdsStoreCache_StreamsPerGroup = 16;
         }
         else
         {
             context->ExecuteSequences = context->ExecuteSequences32;
             context->DecompressSequences_LdsFseCache = context->DecompressSequences_LdsFseCache32;
+            context->DecompressLiterals_LdsStoreCache = context->DecompressLiterals_LdsStoreCache32_16;
+            context->DecompressLiterals_LdsStoreCache_StreamsPerGroup = 16;
         }
 #endif
         context->ExecuteSequences.rs->AddRef();
@@ -581,6 +603,9 @@ zstdgpu_Status zstdgpu_CreatePerRequestContext(zstdgpu_PerRequestContext *outPer
 
         context->DecompressSequences_LdsFseCache.rs->AddRef();
         context->DecompressSequences_LdsFseCache.ps->AddRef();
+
+        context->DecompressLiterals_LdsStoreCache.rs->AddRef();
+        context->DecompressLiterals_LdsStoreCache.ps->AddRef();
 
         context->srts.heap = NULL;
         context->srts.heapOffset = 0;
@@ -646,6 +671,7 @@ zstdgpu_Status zstdgpu_DestroyPerRequestContext(void **outMemoryBlock, uint32_t 
 
         d3d12aid_ComputeRsPs_Release(&inPerRequestContext->ExecuteSequences);
         d3d12aid_ComputeRsPs_Release(&inPerRequestContext->DecompressSequences_LdsFseCache);
+        d3d12aid_ComputeRsPs_Release(&inPerRequestContext->DecompressLiterals_LdsStoreCache);
         #define ZSTDGPU_KERNEL(name, desc) d3d12aid_ComputeRsPs_Release(&inPerRequestContext->name);
             ZSTDGPU_KERNEL_LIST()
         #undef ZSTDGPU_KERNEL
@@ -1478,6 +1504,13 @@ void zstdgpu_SubmitStage2(zstdgpu_PerRequestContext req, ID3D12GraphicsCommandLi
         cmdList->SetComputeRootUnorderedAccessView(3, req->resData.gpuOnly.LitGroupEndPerHuffmanTable->GetGPUVirtualAddress() + req->zstdCmpBlockCount * sizeof(uint32_t));
         cmdList->SetComputeRootUnorderedAccessView(4, req->resData.gpuOnly.Counters->GetGPUVirtualAddress());
         cmdList->SetComputeRoot32BitConstant(5, req->zstdCmpBlockCount, 0);
+#if 0
+        // NOTE(pamartis): Use this pass to with DecompressLiterals kernel
+        cmdList->SetComputeRoot32BitConstant(5, kzstdgpu_TgSizeX_DecompressLiterals, 1);
+#else
+        // NOTE(pamartis): Use this path to with DecompressLiterals_LdsStoreCache* kernels
+        cmdList->SetComputeRoot32BitConstant(5, req->DecompressLiterals_LdsStoreCache_StreamsPerGroup, 1);
+#endif
         ZSTDGPU_KERNEL_SCOPE(ComputePrefixSum, cmdList,
             cmdList->Dispatch(ZSTDGPU_TG_COUNT(req->zstdCmpBlockCount, kzstdgpu_TgSizeX_PrefixSum_LiteralCount), 1, 1);
         );
@@ -1679,6 +1712,7 @@ void zstdgpu_SubmitStage2(zstdgpu_PerRequestContext req, ID3D12GraphicsCommandLi
 
     if (req->zstdCmpBlockCount > 0)
     {
+#if 0
         PIXBeginEvent(cmdList, PIX_COLOR_DEFAULT, L"[Decompress Literals]");
         BIND_RS_PS_SRT(DecompressLiterals);
         cmdList->SetComputeRoot32BitConstant(1, req->zstdCmpBlockCount, 0);
@@ -1688,6 +1722,20 @@ void zstdgpu_SubmitStage2(zstdgpu_PerRequestContext req, ID3D12GraphicsCommandLi
             cmdList->ExecuteIndirect(req->dispatchCmdSig, 1, argBuf, kzstdgpu_CounterIndex_DecompressLiteralsGroups * sizeof(uint32_t), NULL, 0);
         );
         PIXEndEvent(cmdList);
+#else
+        PIXBeginEvent(cmdList, PIX_COLOR_DEFAULT, L"[Decompress Literals (LDS Store Cache)]");
+        d3d12aid_ComputeRsPs_Set(&req->DecompressLiterals_LdsStoreCache, cmdList);
+        cmdList->SetDescriptorHeaps(1, &req->srts.heap);
+        cmdList->SetComputeRootDescriptorTable(0, req->srts.DecompressLiteralsGpuHandle);
+        cmdList->SetComputeRootUnorderedAccessView(1, req->resData.gpuOnly.DecompressedLiterals->GetGPUVirtualAddress());
+        cmdList->SetComputeRoot32BitConstant(2, req->zstdCmpBlockCount, 0);
+
+        ID3D12Resource* argBuf = req->resData.gpuOnly.Counters;
+        ZSTDGPU_KERNEL_SCOPE(DecompressLiterals, cmdList,
+            cmdList->ExecuteIndirect(req->dispatchCmdSig, 1, argBuf, kzstdgpu_CounterIndex_DecompressLiteralsGroups * sizeof(uint32_t), NULL, 0);
+        );
+        PIXEndEvent(cmdList);
+#endif
     }
 
     if (req->zstdCmpBlockCount > 0)
