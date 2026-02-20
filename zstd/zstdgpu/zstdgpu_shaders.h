@@ -3251,16 +3251,19 @@ void zstdgpu_DecompressHuffmanCompressedLiterals_StoreLdsCache(ZSTDGPU_RO_RAW_BU
             const uint32_t dwordIdxInCache = (dwordIdxInBatch & ~kStoreCacheBankMask) + ((dwordIdxInBatch + threadId) & kStoreCacheBankMask);
             zstdgpu_LdsStoreU32(GS_LiteralStoreCache + storeCacheThreadOffset + dwordIdxInCache, dword);
         }
-        // Ensure all threads' LDS cache writes are visible before cooperative read
-        GroupMemoryBarrierWithGroupSync();
 
-        // Move at most `cacheDwordsPerStream` dwords from LDS cache to memory using the entire threadgroup.
-        for (uint32_t i = 0; i < thisGroupLiteralRemain; ++i)
+        const uint32_t laneCnt = zstdgpu_MinU32(WaveGetLaneCount(), tgSize);
+        const uint32_t waveIdx = WaveReadLaneFirst(threadId / laneCnt);
+
+        uint32_t i = waveIdx * laneCnt;
+        const uint32_t streamEnd = zstdgpu_MinU32(i + laneCnt, thisGroupLiteralRemain);
+
+        ZSTDGPU_LOOP for (; i < streamEnd; ++i)
         {
             const uint32_t dwordCntInBatch = WaveReadLaneAt(dwordIdxBatchEnd - dwordIdxBatchBeg, i);
             const uint32_t dstDwordIdx = WaveReadLaneAt(dwordIdxBatchBeg, i);
 
-            ZSTDGPU_FOR_WORK_ITEMS(dwordIdxToStore, dwordCntInBatch, threadId, tgSize)
+            ZSTDGPU_FOR_WORK_ITEMS(dwordIdxToStore, dwordCntInBatch, WaveGetLaneIndex(), laneCnt)
             {
                 // Inverse of the store swizzle: thread i stored logical dword d at cache position ((d + i) & mask)
                 const uint32_t dwordIdxInCache = (dwordIdxToStore & ~kStoreCacheBankMask) + ((dwordIdxToStore + i) & kStoreCacheBankMask);
