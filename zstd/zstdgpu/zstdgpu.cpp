@@ -275,7 +275,7 @@ static void zstdgpu_ReCreate_SRTs(zstdgpu_SRTs & srts, ID3D12Device *device, con
     #define ZSTDGPU_PUSH_STRUCT_BUFFER(type, name, viewType) \
         d3d12aid_##viewType##_Create(cpuDest, device,                                                       \
             gpuResData.gpuOnly.name,                                                                        \
-            d3d12aid_##viewType##_InitAsStructBuffer(&viewType, resInfo.name##_ByteSize, sizeof(type))      \
+            d3d12aid_##viewType##_InitAsStructBuffer(&viewType, resInfo.name##_ByteSize - resInfo.name##_ByteSize % sizeof(type), sizeof(type))      \
         );                                                                                                  \
         cpuDest.ptr += descSize;                                                                            \
         gpuDest.ptr += descSize;
