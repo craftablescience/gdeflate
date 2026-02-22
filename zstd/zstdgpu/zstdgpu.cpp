@@ -263,8 +263,8 @@ static void zstdgpu_ReCreate_SRTs(zstdgpu_SRTs & srts, ID3D12Device *device, con
     D3D12_CPU_DESCRIPTOR_HANDLE cpuStart = d3d12aid_DescriptorHeap_GetCpuStart(srts.heap);
     const uint32_t descSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
-    D3D12_CPU_DESCRIPTOR_HANDLE cpuDest = { cpuStart.ptr + srts.heapOffset * descSize };
-    D3D12_GPU_DESCRIPTOR_HANDLE gpuDest = { gpuStart.ptr + srts.heapOffset * descSize };
+    D3D12_CPU_DESCRIPTOR_HANDLE cpuDest = { cpuStart.ptr + (SIZE_T)srts.heapOffset * descSize };
+    D3D12_GPU_DESCRIPTOR_HANDLE gpuDest = { gpuStart.ptr + (SIZE_T)srts.heapOffset * descSize };
 
     D3D12_SHADER_RESOURCE_VIEW_DESC SRV;
     D3D12_UNORDERED_ACCESS_VIEW_DESC UAV;
@@ -463,7 +463,7 @@ struct zstdgpu_PerRequestContextImpl
 static uint32_t zstdgpu_GetStageCountFromSetupInputsType(ZSTDGPU_ENUM(SetupInputsType) type)
 {
     ZSTDGPU_UNUSED(type);
-    return 3u;
+    return ZSTDGPU_ENUM_CONST(ResourceAllocation_StageCount);
 }
 
 uint32_t zstdgpu_GetPersistentContextRequiredMemorySizeInBytes(void)
@@ -506,7 +506,7 @@ ZSTDGPU_ENUM(Status) zstdgpu_CreatePersistentContext(zstdgpu_PersistentContext *
         D3D12AID_CHECK(device->CreateCommandSignature(&dispatchCmdSigDesc, NULL, D3D12AID_IID_PPV_ARGS(&context->dispatchCmdSig)));
 
         D3D12_FEATURE_DATA_D3D12_OPTIONS1 featureOptions1;
-        D3D12AID_CHECK(device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS1, &featureOptions1, sizeof(featureOptions1)));
+        D3D12AID_CHECK(device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS1, ZSTDGPU_WARN_DISABLE_MSVC(6001, &featureOptions1), sizeof(featureOptions1)));
         context->minLaneCount = featureOptions1.WaveLaneCountMin;
         context->maxLaneCount = featureOptions1.WaveLaneCountMax;
 
@@ -814,7 +814,7 @@ ZSTDGPU_ENUM(Status) zstdgpu_GetGpuMemoryRequirement(uint32_t *outDefaultHeapByt
     proceed = proceed && (NULL != outUploadHeapByteCount);
     proceed = proceed && (NULL != outReadbackHeapByteCount);
     proceed = proceed && (NULL != outShaderVisibleDescriptorCount);
-    proceed = proceed && (stageIndex < stageCount);
+    proceed = proceed && (stageIndex < stageCount) && stageIndex < ZSTDGPU_ENUM_CONST(ResourceAllocation_StageCount);
     proceed = proceed && (req->thisMemoryBlock == (void *)req);
     proceed = proceed && (req->zstdFrameCount > 0);
     proceed = proceed && (req->zstdCompressedFramesByteCount > 0);
@@ -984,7 +984,7 @@ ZSTDGPU_ENUM(Status) zstdgpu_SubmitWithInteralMemory(zstdgpu_PerRequestContext r
     proceed = proceed && (req->zstdCompressedFramesByteCount > 0);
     proceed = proceed && (req->zstdUncompressedFrameCount == req->zstdFrameCount);
     proceed = proceed && (req->zstdUncompressedFramesByteCount > 0);
-    proceed = proceed && (stageIndex < stageCount);
+    proceed = proceed && (stageIndex < stageCount) && (stageIndex < ZSTDGPU_ENUM_CONST(ResourceAllocation_StageCount));
     proceed = proceed && (NULL != cmdList);
     ZSTDGPU_ASSERT(proceed > 0);
 

@@ -3243,7 +3243,7 @@ static void zstdgpu_DecompressHuffmanCompressedLiterals_StoreLdsCache(ZSTDGPU_RO
             {
                 // Inverse of the store swizzle: thread i stored logical dword d at cache position ((d + i) & mask)
                 const uint32_t dwordIdxInCache = (dwordIdxToStore & ~kStoreCacheBankMask) + ((dwordIdxToStore + i) & kStoreCacheBankMask);
-                const uint32_t dword = zstdgpu_LdsLoadU32(GS_LiteralStoreCache + i * cacheDwordsPerStream + dwordIdxInCache);
+                const uint32_t dword = zstdgpu_LdsLoadU32(GS_LiteralStoreCache + ZSTDGPU_INTENDED_MUL32(i * cacheDwordsPerStream) + dwordIdxInCache);
 
                 DecompressedLiteralsAsDwords[dstDwordIdx + dwordIdxToStore] = dword;
             }

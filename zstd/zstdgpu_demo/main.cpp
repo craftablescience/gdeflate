@@ -91,15 +91,22 @@ static void loadFileAligned(void **outData, uint32_t *outDataSize, uint32_t *out
         fseek(file, 0, SEEK_END);
         dataSize = ftell(file);
         fseek(file, 0, SEEK_SET);
-        bufferSize = (dataSize + alignmentMask) & ~alignmentMask;
-        data = malloc(bufferSize);
-        size_t readSize = fread(data, 1, dataSize, file);
-        ZSTDGPU_ASSERT(readSize == dataSize);
-        fclose(file);
-        if (bufferSize > dataSize)
+        if (-1 != dataSize)
         {
-            memset((char *)data + dataSize, 0, bufferSize - dataSize);
+            bufferSize = (dataSize + alignmentMask) & ~alignmentMask;
+            data = malloc(bufferSize);
+            ZSTDGPU_ASSERT(NULL != data);
+            if (NULL != data)
+            {
+                size_t readSize = fread(data, 1, dataSize, file);
+                ZSTDGPU_ASSERT(readSize == dataSize);
+                if(bufferSize > dataSize)
+                {
+                    memset((char*)data + dataSize, 0, bufferSize - dataSize);
+                }
+            }
         }
+        fclose(file);
     }
     *outData = data;
     *outDataSize = (uint32_t)dataSize;

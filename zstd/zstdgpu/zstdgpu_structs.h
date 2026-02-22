@@ -113,6 +113,22 @@
 #   endif
 #endif /* ZSTDGPU_ENUM */
 
+#ifndef ZSTDGPU_INTENDED_SHIFT
+#   ifdef _MSC_VER
+#       define ZSTDGPU_INTENDED_SHIFT(e) ZSTDGPU_WARN_DISABLE_MSVC(26450, (e))
+#   else
+#       define ZSTDGPU_INTENDED_SHIFT(e) (e)
+#   endif
+#endif /* ZSTDGPU_INTENDED_SHIFT */
+
+#ifndef ZSTDGPU_INTENDED_MUL32
+#   ifdef _MSC_VER
+#       define ZSTDGPU_INTENDED_MUL32(e) ZSTDGPU_WARN_DISABLE_MSVC(26451, (e))
+#   else
+#       define ZSTDGPU_INTENDED_MUL32(e) (e)
+#   endif
+#endif /* ZSTDGPU_INTENDED_MUL32 */
+
 #ifndef ZSTDGPU_RO_BUFFER
 #   ifdef __hlsl_dx_compiler
 #       define ZSTDGPU_RO_BUFFER(type) StructuredBuffer<type>
@@ -501,7 +517,8 @@ static inline uint64_t zstdgpu_LoBitFieldWideMaskU64(uint32_t width)
 static inline uint32_t zstdgpu_HiBitFieldMaskU32(uint32_t width)
 {
     ZSTDGPU_ASSERT(width <= 31u);
-    return (~0u << 1u) << (31u - width);
+    /**NOTE(pamartis): disable the warning because the overflow here is intended behaviour */
+    return ZSTDGPU_INTENDED_SHIFT(~0u << 1u) << (31u - width);
 }
 
 static inline uint64_t zstdgpu_HiBitFieldMaskU64(uint32_t width)
