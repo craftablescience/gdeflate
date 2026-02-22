@@ -103,7 +103,7 @@
 #   endif
 #endif /* ZSTDGPU_GLC */
 
-#ifndef ZSTDGPU_UNSCOPED_ENUM
+#ifndef ZSTDGPU_ENUM
 #   ifdef _MSC_VER
 #       define ZSTDGPU_ENUM(e)          ZSTDGPU_WARN_DISABLE_MSVC(26812, zstdgpu_##e)
 #       define ZSTDGPU_ENUM_CONST(ec)   ZSTDGPU_WARN_DISABLE_MSVC(26812, kzstdgpu_##ec)
