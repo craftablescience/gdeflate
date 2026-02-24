@@ -3263,8 +3263,8 @@ static void zstdgpu_DecompressHuffmanCompressedLiterals_StoreLdsCache(ZSTDGPU_RO
 
         ZSTDGPU_LOOP for (; i < streamEnd; ++i)
         {
-            const uint32_t dwordCntInBatch = WaveReadLaneAt(dwordIdxBatchEnd - dwordIdxBatchBeg, i);
-            const uint32_t dstDwordIdx = WaveReadLaneAt(dwordIdxBatchBeg, i);
+            const uint32_t dwordCntInBatch = WaveReadLaneAt(dwordIdxBatchEnd - dwordIdxBatchBeg, i - streamBeg);
+            const uint32_t dstDwordIdx = WaveReadLaneAt(dwordIdxBatchBeg, i - streamBeg);
 
             ZSTDGPU_FOR_WORK_ITEMS(dwordIdxToStore, dwordCntInBatch, WaveGetLaneIndex(), laneCnt)
             {
