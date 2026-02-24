@@ -49,6 +49,9 @@
 #include "ZstdGpuDecompressSequences_LdsFseCache128.h"
 #include "ZstdGpuDecompressSequences_LdsFseCache64.h"
 #include "ZstdGpuDecompressSequences_LdsFseCache32.h"
+#include "ZstdGpuDecompressSequences_Scalar128.h"
+#include "ZstdGpuDecompressSequences_Scalar64.h"
+#include "ZstdGpuDecompressSequences_Scalar32.h"
 #include "ZstdGpuExecuteSequences128.h"
 #include "ZstdGpuExecuteSequences64.h"
 #include "ZstdGpuExecuteSequences32.h"
@@ -335,6 +338,9 @@ static void zstdgpu_ReCreate_SRTs(zstdgpu_SRTs & srts, ID3D12Device *device, con
     ZSTDGPU_KERNEL(DecompressSequences_LdsFseCache128       ,   L"Decompress Sequences (LDS FSE Cache, TG Size= 128)")                  \
     ZSTDGPU_KERNEL(DecompressSequences_LdsFseCache64        ,   L"Decompress Sequences (LDS FSE Cache, TG Size=  64)")                  \
     ZSTDGPU_KERNEL(DecompressSequences_LdsFseCache32        ,   L"Decompress Sequences (LDS FSE Cache, TG Size=  32)")                  \
+    ZSTDGPU_KERNEL(DecompressSequences_Scalar128            ,   L"Decompress Sequences (Scalar, TG Size= 128)")                         \
+    ZSTDGPU_KERNEL(DecompressSequences_Scalar64             ,   L"Decompress Sequences (Scalar, TG Size=  64)")                         \
+    ZSTDGPU_KERNEL(DecompressSequences_Scalar32             ,   L"Decompress Sequences (Scalar, TG Size=  32)")                         \
     ZSTDGPU_KERNEL(ExecuteSequences128                      ,   L"Execute Sequences 128")                                               \
     ZSTDGPU_KERNEL(ExecuteSequences64                       ,   L"Execute Sequences 64")                                                \
     ZSTDGPU_KERNEL(ExecuteSequences32                       ,   L"Execute Sequences 32")                                                \
@@ -1639,15 +1645,13 @@ void zstdgpu_SubmitStage2(zstdgpu_PerRequestContext req, ID3D12GraphicsCommandLi
     if (req->zstdCmpBlockCount > 0)
     {
         PIXBeginEvent(cmdList, PIX_COLOR_DEFAULT, L"Barrier with Resources for [Huffman Weights Decompression] and [Decompress Literals]");
-        D3D12_RESOURCE_BARRIER barriers[4];
+        D3D12_RESOURCE_BARRIER barriers[2];
         // last written by [Init FSE Table]
         // next read by [Decompress Huffman Weights] and [Decompress Sequences]
-        setResourceUavToSrvSync(barriers, 0, req->resData.gpuOnly.FseSymbols);
-        setResourceUavToSrvSync(barriers, 1, req->resData.gpuOnly.FseNStates);
-        setResourceUavToSrvSync(barriers, 2, req->resData.gpuOnly.FseBitcnts);
+        setResourceUavToSrvSync(barriers, 0, req->resData.gpuOnly.FseElems);
         // last written by [Group Lilteral Streams]
         // next read [Init Huffman Table and Decompress Literals]
-        setResourceUavToSrvSync(barriers, 3, req->resData.gpuOnly.LitStreamRemap);
+        setResourceUavToSrvSync(barriers, 1, req->resData.gpuOnly.LitStreamRemap);
         cmdList->ResourceBarrier(_countof(barriers), barriers);
         PIXEndEvent(cmdList);
     }

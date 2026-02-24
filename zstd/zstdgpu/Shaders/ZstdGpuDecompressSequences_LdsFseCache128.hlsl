@@ -16,5 +16,6 @@
  * Author(s):   Pavel Martishevsky (pamartis@microsoft.com)
  */
 
+#define ZSTDGPU_DECOMPRESS_SEQUENCES_NO_LDS_FSE_CACHE 0
 #define kzstdgpu_TgSizeX_DecompressSequences_LdsFseCache 128
 #include "ZstdGpuDecompressSequences_LdsFseCache.hlsli"

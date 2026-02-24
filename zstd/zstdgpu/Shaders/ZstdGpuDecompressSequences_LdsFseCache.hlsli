@@ -45,15 +45,17 @@ ConstantBuffer<Consts> Constants : register(b0);
 ZSTDGPU_DECOMPRESS_SEQUENCES_SRT()
 #include "../zstdgpu_srt_decl_undef.h"
 
+#if !ZSTDGPU_DECOMPRESS_SEQUENCES_NO_LDS_FSE_CACHE
 groupshared uint32_t Lds[kzstdgpu_DecompressSequences_LdsFseCache_LdsSize];
 #define ZSTDGPU_LDS Lds
 #include "../zstdgpu_lds_hlsl.h"
+#endif
 
 #ifndef kzstdgpu_TgSizeX_DecompressSequences_LdsFseCache
 #   error 'kzstdgpu_TgSizeX_DecompressSequences_LdsFseCache' must be defined before including this '.hlsli'
 #endif
 
-[RootSignature("DescriptorTable(SRV(t0, numDescriptors=8), UAV(u0, numDescriptors=7)), RootConstants(b0, num32BitConstants=1)")]
+[RootSignature("DescriptorTable(SRV(t0, numDescriptors=6), UAV(u0, numDescriptors=7)), RootConstants(b0, num32BitConstants=1)")]
 [numthreads(kzstdgpu_TgSizeX_DecompressSequences_LdsFseCache, 1, 1)]
 void main(uint32_t2 groupId2 : SV_GroupId, uint i : SV_GroupThreadId)
 {

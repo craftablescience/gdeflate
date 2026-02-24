@@ -277,6 +277,16 @@ static const uint32_t kzstdgpu_FseDefaultProbAccuracy_MLen = 6;
 // RLE table with symbol S uses fseTableIndex = S. Real tables start at index 256.
 static const uint32_t kzstdgpu_FseRleTableCount = 256;
 
+// FSE element packing: symbol(8) | bitcnt(8) | nstate(16) -> uint32_t
+static inline uint32_t zstdgpu_PackFseElem(uint32_t symbol, uint32_t bitcnt, uint32_t nstate)
+{
+    return (nstate << 16) | (bitcnt << 8) | symbol;
+}
+
+static inline uint32_t zstdgpu_FseElem_Symbol(uint32_t packed) { return packed & 0xffu; }
+static inline uint32_t zstdgpu_FseElem_Bitcnt(uint32_t packed) { return (packed >> 8) & 0xffu; }
+static inline uint32_t zstdgpu_FseElem_NState(uint32_t packed) { return packed >> 16; }
+
 // We define some special indices to classify FSE table indices referred by compressed blocks:
 //  "Unused" - special index showing the compressed block doesn't use FSE table
 //  "Repeat" - special index showing the compressed block uses FSE table from previous block that uses some
@@ -1576,9 +1586,7 @@ static inline uint32_t zstdgpu_InitResources_GetDispatchSizeX(uint32_t allBlockC
     ZSTDGPU_RW_BUFFER_DECL(uint32_t                             , SeqCountPrefixLookback        , 17)   \
     ZSTDGPU_RW_BUFFER_DECL(uint32_t                             , BlockSeqCountPrefixLookback   , 18)   \
     \
-    ZSTDGPU_RW_TYPED_BUFFER_DECL(uint32_t, uint8_t              , FseSymbols                    , 19)   \
-    ZSTDGPU_RW_TYPED_BUFFER_DECL(uint32_t, uint8_t              , FseBitcnts                    , 20)   \
-    ZSTDGPU_RW_TYPED_BUFFER_DECL(uint32_t, uint16_t             , FseNStates                    , 21)
+    ZSTDGPU_RW_BUFFER_DECL(uint32_t                             , FseElems                      , 19)
 
 #define ZSTDGPU_PARSE_COMPRESSED_BLOCKS_SRT()                                                           \
     ZSTDGPU_RO_BUFFER_DECL(uint32_t                             , CompressedData                , 0)    \
@@ -1610,9 +1618,7 @@ static inline uint32_t zstdgpu_InitResources_GetDispatchSizeX(uint32_t allBlockC
     \
     ZSTDGPU_RO_TYPED_BUFFER_DECL(int32_t, int16_t               , FseProbs                      , 1)    \
     \
-    ZSTDGPU_RW_TYPED_BUFFER_DECL(uint32_t, uint8_t              , FseSymbols                    , 0)    \
-    ZSTDGPU_RW_TYPED_BUFFER_DECL(uint32_t, uint8_t              , FseBitcnts                    , 1)    \
-    ZSTDGPU_RW_TYPED_BUFFER_DECL(uint32_t, uint16_t             , FseNStates                    , 2)
+    ZSTDGPU_RW_BUFFER_DECL(uint32_t                             , FseElems                      , 0)
 
 #define ZSTDGPU_DECOMPRESS_HUFFMAN_WEIGHTS_SRT()                                                        \
     ZSTDGPU_RO_BUFFER_DECL(uint32_t                             , Counters                      , 0)    \
@@ -1620,9 +1626,7 @@ static inline uint32_t zstdgpu_InitResources_GetDispatchSizeX(uint32_t allBlockC
     ZSTDGPU_RO_BUFFER_DECL(zstdgpu_OffsetAndSize                , HufRefs                       , 2)    \
     ZSTDGPU_RO_BUFFER_DECL(zstdgpu_FseInfo                      , FseInfos                      , 3)    \
     \
-    ZSTDGPU_RO_TYPED_BUFFER_DECL(uint32_t, uint8_t              , FseSymbols                    , 4)    \
-    ZSTDGPU_RO_TYPED_BUFFER_DECL(uint32_t, uint8_t              , FseBitcnts                    , 5)    \
-    ZSTDGPU_RO_TYPED_BUFFER_DECL(uint32_t, uint16_t             , FseNStates                    , 6)    \
+    ZSTDGPU_RO_BUFFER_DECL(uint32_t                             , FseElems                      , 4)    \
     \
     ZSTDGPU_RW_TYPED_BUFFER_DECL(uint32_t, uint8_t              , DecompressedHuffmanWeights    , 0)    \
     ZSTDGPU_RW_TYPED_BUFFER_DECL(uint32_t, uint8_t              , DecompressedHuffmanWeightCount, 1)
@@ -1679,9 +1683,7 @@ static inline uint32_t zstdgpu_InitResources_GetDispatchSizeX(uint32_t allBlockC
     ZSTDGPU_RO_BUFFER_DECL(zstdgpu_FseInfo                      , FseInfos                      , 3)    \
     ZSTDGPU_RO_BUFFER_DECL(uint32_t                             , PerSeqStreamSeqStart          , 4)    \
     \
-    ZSTDGPU_RO_TYPED_BUFFER_DECL(uint32_t, uint8_t              , FseSymbols                    , 5)    \
-    ZSTDGPU_RO_TYPED_BUFFER_DECL(uint32_t, uint8_t              , FseBitcnts                    , 6)    \
-    ZSTDGPU_RO_TYPED_BUFFER_DECL(uint32_t, uint16_t             , FseNStates                    , 7)    \
+    ZSTDGPU_RO_BUFFER_DECL(uint32_t                             , FseElems                      , 5)    \
     \
     ZSTDGPU_RW_BUFFER_DECL(uint32_t                             , DecompressedSequenceLLen      , 0)    \
     ZSTDGPU_RW_BUFFER_DECL(uint32_t                             , DecompressedSequenceMLen      , 1)    \

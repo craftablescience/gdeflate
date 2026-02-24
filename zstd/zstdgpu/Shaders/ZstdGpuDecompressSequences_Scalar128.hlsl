@@ -1,9 +1,9 @@
 /**
- * ZstdGpuDecompressSequences_LdsFseCache32.hlsl
+ * ZstdGpuDecompressSequences_Scalar128.hlsl
  *
- * A variant of the compute shader decompressessing FSE-compressed sequences with
- * FSE tables being pre-cached into LDS that targets hardware with maximal supported
- * wave size of 32 lanes.
+ * A variant of the compute shader decompressessing FSE-compressed sequences
+ * without pre-caching FSE tables into LDS, reading directly from the buffer.
+ * Targets hardware with maximal supported wave size of 128 lanes.
  *
  * Copyright (c) Microsoft. All rights reserved.
  * This code is licensed under the MIT License (MIT).
@@ -16,6 +16,6 @@
  * Author(s):   Pavel Martishevsky (pamartis@microsoft.com)
  */
 
-#define ZSTDGPU_DECOMPRESS_SEQUENCES_NO_LDS_FSE_CACHE 0
-#define kzstdgpu_TgSizeX_DecompressSequences_LdsFseCache 32
+#define ZSTDGPU_DECOMPRESS_SEQUENCES_NO_LDS_FSE_CACHE 1
+#define kzstdgpu_TgSizeX_DecompressSequences_LdsFseCache 128
 #include "ZstdGpuDecompressSequences_LdsFseCache.hlsli"

@@ -25,7 +25,7 @@ ZSTDGPU_DECOMPRESS_HUFFMAN_WEIGHTS_SRT()
 #define __XBOX_ENABLE_WAVE32 1
 #endif
 
-[RootSignature("DescriptorTable(SRV(t0, numDescriptors=7), UAV(u0, numDescriptors=2))")]
+[RootSignature("DescriptorTable(SRV(t0, numDescriptors=5), UAV(u0, numDescriptors=2))")]
 [numthreads(kzstdgpu_TgSizeX_DecompressHuffmanWeights, 1, 1)]
 void main(uint i : SV_DispatchThreadId)
 {

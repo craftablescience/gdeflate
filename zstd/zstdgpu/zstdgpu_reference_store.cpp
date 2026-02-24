@@ -99,9 +99,7 @@ void zstdgpu_ReferenceStore_AllocateMemory(void)
     // Pre-populate 256 dense RLE entries at the beginning of FSE element buffers
     for (uint32_t i = 0; i < kzstdgpu_FseRleTableCount; ++i)
     {
-        GZstd.FseSymbols[i] = (uint8_t)i;
-        GZstd.FseBitcnts[i] = 0;
-        GZstd.FseNStates[i] = 0;
+        GZstd.FseElems[i] = zstdgpu_PackFseElem(i, 0, 0);
         GZstd.FseInfos[i].fseProbCountAndAccuracyLog2 = 0;
     }
 }
@@ -351,9 +349,8 @@ void zstdgpu_ReferenceStore_Report_FseTable(const int16_t *probs, uint32_t symCo
         GLastTableIndex_Fse##name = storeExpr;                                                              \
         GZstd.FseInfos[fseIndex] = zstdgpu_CreateFseInfo(symCount, accuracyLog2);                           \
         memcpy(&GZstd.FseProbs[fseProbStart], probs, sizeof(probs[0]) * symCount);                          \
-        memcpy(&GZstd.FseSymbols[fseElemStart], symbol, sizeof(symbol[0]) * elemCount);                     \
-        memcpy(&GZstd.FseBitcnts[fseElemStart], bitcnt, sizeof(bitcnt[0]) * elemCount);                     \
-        memcpy(&GZstd.FseNStates[fseElemStart], nstate, sizeof(nstate[0]) * elemCount);                     \
+        for (uint32_t e = 0; e < elemCount; ++e)                                                            \
+            GZstd.FseElems[fseElemStart + e] = zstdgpu_PackFseElem(symbol[e], bitcnt[e], nstate[e]);        \
     }
 
     STORE(HufW, localIdx)
@@ -387,9 +384,8 @@ void zstdgpu_ReferenceStore_Report_FseDefaultTable(const int16_t *probs, uint32_
         {                                                                                                   \
             GZstd.FseInfos[fseIndex] = zstdgpu_CreateFseInfo(symCount, accuracyLog2);                       \
             memcpy(&GZstd.FseProbs[fseProbStart], probs, sizeof(probs[0]) * symCount);                      \
-            memcpy(&GZstd.FseSymbols[fseElemStart], symbol, sizeof(symbol[0]) * elemCount);                 \
-            memcpy(&GZstd.FseBitcnts[fseElemStart], bitcnt, sizeof(bitcnt[0]) * elemCount);                 \
-            memcpy(&GZstd.FseNStates[fseElemStart], nstate, sizeof(nstate[0]) * elemCount);                 \
+            for (uint32_t e = 0; e < elemCount; ++e)                                                        \
+                GZstd.FseElems[fseElemStart + e] = zstdgpu_PackFseElem(symbol[e], bitcnt[e], nstate[e]);    \
             GFseProbDefaultTable##name##Stored = 1;                                                         \
         }                                                                                                   \
     }
@@ -828,12 +824,8 @@ static ZSTDGPU_ENUM(Validate_Result) izstdgpu_ReferenceStore_Validate_FseTable(u
                                                                          const zstdgpu_FseInfo *tstFseInfos,
                                                                          const int16_t *refFseProbs,
                                                                          const int16_t *tstFseProbs,
-                                                                         const uint8_t *refFseSymbols,
-                                                                         const uint8_t *tstFseSymbols,
-                                                                         const uint8_t *refFseBitcnts,
-                                                                         const uint8_t *tstFseBitcnts,
-                                                                         const uint16_t *refFseNStates,
-                                                                         const uint16_t *tstFseNStates)
+                                                                         const uint32_t *refFseElems,
+                                                                         const uint32_t *tstFseElems)
 {
     // All table indices (including RLE 0-255) are valid real indices now
     if (refFseTableIndex < kzstdgpu_FseProbTableIndex_Repeat)
@@ -863,18 +855,12 @@ static ZSTDGPU_ENUM(Validate_Result) izstdgpu_ReferenceStore_Validate_FseTable(u
                 return ZSTDGPU_ENUM_CONST(Validate_Failed);
         }
 
-        if (NULL != tstFseSymbols)
+        if (NULL != tstFseElems)
         {
             const uint32_t refElemStart = elemOffsetFn(refFseTableIndex, cmpBlockCount);
             const uint32_t tstElemStart = elemOffsetFn(tstFseTableIndex, cmpBlockCount);
 
-            if (0 != memcmp(&refFseSymbols[refElemStart], &tstFseSymbols[tstElemStart], symbolCount * sizeof(refFseSymbols[0])))
-                return ZSTDGPU_ENUM_CONST(Validate_Failed);
-
-            if (0 != memcmp(&refFseBitcnts[refElemStart], &tstFseBitcnts[tstElemStart], symbolCount * sizeof(refFseBitcnts[0])))
-                return ZSTDGPU_ENUM_CONST(Validate_Failed);
-
-            if (0 != memcmp(&refFseNStates[refElemStart], &tstFseNStates[tstElemStart], symbolCount * sizeof(refFseNStates[0])))
+            if (0 != memcmp(&refFseElems[refElemStart], &tstFseElems[tstElemStart], symbolCount * sizeof(refFseElems[0])))
                 return ZSTDGPU_ENUM_CONST(Validate_Failed);
 
         }
@@ -925,12 +911,8 @@ ZSTDGPU_ENUM(Validate_Result) zstdgpu_ReferenceStore_Validate_FseTables(const zs
                 tst->FseInfos,                                  \
                 ref->FseProbs,                                  \
                 tst->FseProbs,                                  \
-                ref->FseSymbols,                                \
-                tst->FseSymbols,                                \
-                ref->FseBitcnts,                                \
-                tst->FseBitcnts,                                \
-                ref->FseNStates,                                \
-                tst->FseNStates                                 \
+                ref->FseElems,                                  \
+                tst->FseElems                                   \
             )
 
         // NOTE(pamartis): When FSE HufW table index is less than the total number of FSE table count --

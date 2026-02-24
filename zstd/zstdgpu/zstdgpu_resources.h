@@ -74,9 +74,7 @@
     ZSTDGPU_BUFFER(int16_t                                  , FseProbs                      )   \
     ZSTDGPU_BUFFER(zstdgpu_FseInfo                          , FseInfos                      )   \
     \
-    ZSTDGPU_BUFFER(uint8_t                                  , FseSymbols                    )   \
-    ZSTDGPU_BUFFER(uint8_t                                  , FseBitcnts                    )   \
-    ZSTDGPU_BUFFER(uint16_t                                 , FseNStates                    )   \
+    ZSTDGPU_BUFFER(uint32_t                                 , FseElems                      )   \
     \
     ZSTDGPU_BUFFER(uint8_t                                  , DecompressedHuffmanWeights    )   \
     ZSTDGPU_BUFFER(uint8_t                                  , DecompressedHuffmanWeightCount)   \
@@ -300,9 +298,7 @@ static void zstdgpu_ResourceInfo_Stage_1_InitSize(zstdgpu_ResourceInfo *outInfo,
     const uint32_t FseProbs_Count = NonRLE_FseTableCount * kzstdgpu_MaxCount_FseProbs;
     const uint32_t FseTableElem_Count = kzstdgpu_FseRleTableCount + cmpBlockCount * (kzstdgpu_FseElemMaxCount_HufW + SeqFseElemMaxCount) + SeqFseElemMaxCount;
 
-    const uint32_t FseSymbols_Count = FseTableElem_Count;
-    const uint32_t FseBitcnts_Count = FseTableElem_Count;
-    const uint32_t FseNStates_Count = FseTableElem_Count;
+    const uint32_t FseElems_Count = FseTableElem_Count;
 
     const uint32_t DecompressedHuffmanWeights_Count = cmpBlockCount * kzstdgpu_MaxCount_HuffmanWeights;
     const uint32_t DecompressedHuffmanWeightCount_Count = cmpBlockCount;

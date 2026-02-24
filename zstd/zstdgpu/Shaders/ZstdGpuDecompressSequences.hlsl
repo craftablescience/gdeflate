@@ -44,7 +44,7 @@ groupshared uint32_t Lds[kzstdgpu_DecompressSequences_LdsOutCache_LdsSize];
 #include "../zstdgpu_lds_hlsl.h"
 #endif
 
-[RootSignature("DescriptorTable(SRV(t0, numDescriptors=8), UAV(u0, numDescriptors=7)), RootConstants(b0, num32BitConstants=1)")]
+[RootSignature("DescriptorTable(SRV(t0, numDescriptors=6), UAV(u0, numDescriptors=7)), RootConstants(b0, num32BitConstants=1)")]
 #ifdef USE_LDS_OUT_CACHE
 #define NUM_THREADS 32
 [numthreads(NUM_THREADS, 1, 1)]
