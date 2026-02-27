@@ -1115,6 +1115,21 @@ ZSTDGPU_ENUM(Status) zstdgpu_SubmitWithInteralMemory(zstdgpu_PerRequestContext r
     }                                                                                   \
     while(0)
 
+#define setResourceSrvCopyIndirectToUavSync(barriers, index, resource)                  \
+    do                                                                                  \
+    {                                                                                   \
+        const uint32_t slot = (index);                                                  \
+        barriers[slot].Type                    = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;\
+        barriers[slot].Flags                   = D3D12_RESOURCE_BARRIER_FLAG_NONE;      \
+        barriers[slot].Transition.pResource    = resource;                              \
+        barriers[slot].Transition.Subresource  = 0;                                     \
+        barriers[slot].Transition.StateBefore  = D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE\
+                                               | D3D12_RESOURCE_STATE_COPY_SOURCE       \
+                                               | D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT;\
+        barriers[slot].Transition.StateAfter   = D3D12_RESOURCE_STATE_UNORDERED_ACCESS; \
+    }                                                                                   \
+    while(0)
+
 #define setResourceUavToSrvCopyIndirectSync(barriers, index, resource)                  \
     do                                                                                  \
     {                                                                                   \
@@ -1945,6 +1960,24 @@ void zstdgpu_SubmitStage2(zstdgpu_PerRequestContext req, ID3D12GraphicsCommandLi
     }
     if (req->zstdCmpBlockCount > 0)
     {
+        PIXBeginEvent(cmdList, PIX_COLOR_DEFAULT, L"Barrier with Resources for [Execute Sequences]");
+        D3D12_RESOURCE_BARRIER barriers[2];
+        uint32_t bc = 0;
+        if (req->zstdRawByteCount > 0 || req->zstdRleByteCount > 0)
+        {
+            // in case if the number of RAW+RLE blocks > 0, [Memcpy RAW blocks, Memset RLE blocks] has written to 'UnCompressedFramesData'
+            // next read by [Execute Sequences]
+            setResourceUavSync(barriers, bc + 0, req->resData.gpuOnly.UnCompressedFramesData);
+            bc += 1;
+        }
+        // next written by [Execute Sequences] when allocating
+        setResourceSrvCopyIndirectToUavSync(barriers, bc + 0, req->resData.gpuOnly.Counters);
+
+        cmdList->ResourceBarrier(_countof(barriers), barriers);
+        PIXEndEvent(cmdList);
+    }
+    if (req->zstdCmpBlockCount > 0)
+    {
         PIXBeginEvent(cmdList, PIX_COLOR_DEFAULT, L"[Execute Sequences]");
         BIND_RS_PS_SRT(ExecuteSequences);
 
@@ -1969,7 +2002,7 @@ ZSTDGPU_API void zstdgpu_ReadbackGpuResults(zstdgpu_PerRequestContext req, ID3D1
     // NOTE(pamartis): these are required to make sure D3D12 validation doesn't complain about state mismatch when
     // Read-only resource from the last stage get a NON_PS_RESOURCE state as a result of promotion from COMMON state
     // and then used as COPY_SOURCE for debug readback
-    D3D12_RESOURCE_BARRIER barriers[13];
+    D3D12_RESOURCE_BARRIER barriers[14];
     uint32_t bc = 0;
     setResourceState(barriers, 0, req->resData.gpuOnly.PerFrameBlockCountCMP, NON_PIXEL_SHADER_RESOURCE, COPY_SOURCE);
     setResourceState(barriers, 1, req->resData.gpuOnly.PerFrameBlockCountAll, NON_PIXEL_SHADER_RESOURCE, COPY_SOURCE);
@@ -1981,7 +2014,8 @@ ZSTDGPU_API void zstdgpu_ReadbackGpuResults(zstdgpu_PerRequestContext req, ID3D1
     {
         setResourceState(barriers, bc + 0, req->resData.gpuOnly.GlobalBlockIndexPerCmpBlock, NON_PIXEL_SHADER_RESOURCE, COPY_SOURCE);
         setResourceState(barriers, bc + 1, req->resData.gpuOnly.PerSeqStreamSeqStart, NON_PIXEL_SHADER_RESOURCE, COPY_SOURCE);
-        bc += 2;
+        setResourceUavToSrvCopyIndirectSync(barriers, bc + 2, req->resData.gpuOnly.Counters);
+        bc += 3;
     }
     if (req->zstdRawBlockCount > 0)
     {

@@ -24,7 +24,7 @@ ZSTDGPU_EXECUTE_SEQUENCES_SRT()
 #define MAX_COPY_SIZE 32
 #endif
 
-[RootSignature("DescriptorTable(SRV(t0, numDescriptors=13), UAV(u0, numDescriptors=1))")]
+[RootSignature("DescriptorTable(SRV(t0, numDescriptors=12), UAV(u0, numDescriptors=2))")]
 [numthreads(MAX_COPY_SIZE, 1, 1)]
 void main(uint groupId : SV_GroupId, uint i : SV_GroupThreadId)
 {
@@ -34,5 +34,5 @@ void main(uint groupId : SV_GroupId, uint i : SV_GroupThreadId)
     ZSTDGPU_EXECUTE_SEQUENCES_SRT()
     #include "../zstdgpu_srt_decl_undef.h"
 
-    zstdgpu_ShaderEntry_ExecuteSequences(srt, groupId, i, MAX_COPY_SIZE);
+    zstdgpu_ShaderEntry_ExecuteSequences(srt);
 }
