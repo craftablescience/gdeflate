@@ -1972,8 +1972,9 @@ void zstdgpu_SubmitStage2(zstdgpu_PerRequestContext req, ID3D12GraphicsCommandLi
         }
         // next written by [Execute Sequences] when allocating
         setResourceSrvCopyIndirectToUavSync(barriers, bc + 0, req->resData.gpuOnly.Counters);
+        bc += 1;
 
-        cmdList->ResourceBarrier(_countof(barriers), barriers);
+        cmdList->ResourceBarrier(bc, barriers);
         PIXEndEvent(cmdList);
     }
     if (req->zstdCmpBlockCount > 0)
