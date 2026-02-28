@@ -3731,30 +3731,28 @@ static void zstdgpu_ShaderEntry_DecompressSequences_LdsFseCache(ZSTDGPU_PARAM_IN
     #define ZSTDGPU_BACKWARD_BITBUF(method) zstdgpu_Backward_BitBuffer_V0_##method
     ZSTDGPU_BACKWARD_BITBUF(InitWithSegment)(bitBuffer, srt.inCompressedData, seqRef.src);
 
-    #define ZSTDGPU_INIT_FSE_STATE(name)                                                                    \
-        uint32_t state##name = 0;                                                                           \
-        {                                                                                                   \
-            const uint32_t initBitcnt = srt.inFseInfos[seqRef.fse##name].fseProbCountAndAccuracyLog2 >> 8;  \
-            state##name = ZSTDGPU_BACKWARD_BITBUF(Get)(bitBuffer, initBitcnt);                              \
-        }
+    const uint32_t initBitcntLLen = srt.inFseInfos[seqRef.fseLLen].fseProbCountAndAccuracyLog2 >> 8;
+    const uint32_t initBitcntOffs = srt.inFseInfos[seqRef.fseOffs].fseProbCountAndAccuracyLog2 >> 8;
+    const uint32_t initBitcntMLen = srt.inFseInfos[seqRef.fseMLen].fseProbCountAndAccuracyLog2 >> 8;
 
-    ZSTDGPU_INIT_FSE_STATE(LLen)
-    ZSTDGPU_INIT_FSE_STATE(Offs)
-    ZSTDGPU_INIT_FSE_STATE(MLen)
-    #undef ZSTDGPU_INIT_FSE_STATE
+    ZSTDGPU_BACKWARD_BITBUF(Refill)(bitBuffer, initBitcntLLen + initBitcntOffs + initBitcntMLen);
+
+    uint32_t stateLLen = ZSTDGPU_BACKWARD_BITBUF(GetNoRefill)(bitBuffer, initBitcntLLen);
+    uint32_t stateOffs = ZSTDGPU_BACKWARD_BITBUF(GetNoRefill)(bitBuffer, initBitcntOffs);
+    uint32_t stateMLen = ZSTDGPU_BACKWARD_BITBUF(GetNoRefill)(bitBuffer, initBitcntMLen);
 
         uint32_t i         = dst.offs;
     const uint32_t outputEnd = dst.offs + dst.size;
     for (;;)
     {
         #if !ZSTDGPU_DECOMPRESS_SEQUENCES_NO_LDS_FSE_CACHE
-        const uint32_t packedFseElemLLen = WaveReadLaneFirst(zstdgpu_LdsLoadU32(GS_FsePackedLLen + stateLLen));
-        const uint32_t packedFseElemOffs = WaveReadLaneFirst(zstdgpu_LdsLoadU32(GS_FsePackedOffs + stateOffs));
-        const uint32_t packedFseElemMLen = WaveReadLaneFirst(zstdgpu_LdsLoadU32(GS_FsePackedMLen + stateMLen));
+            const uint32_t packedFseElemLLen = zstdgpu_LdsLoadU32(GS_FsePackedLLen + stateLLen);
+            const uint32_t packedFseElemOffs = zstdgpu_LdsLoadU32(GS_FsePackedOffs + stateOffs);
+            const uint32_t packedFseElemMLen = zstdgpu_LdsLoadU32(GS_FsePackedMLen + stateMLen);
         #else
-        const uint32_t packedFseElemLLen = WaveReadLaneFirst(srt.inFseElems[startLLen + stateLLen]);
-        const uint32_t packedFseElemOffs = WaveReadLaneFirst(srt.inFseElems[startOffs + stateOffs]);
-        const uint32_t packedFseElemMLen = WaveReadLaneFirst(srt.inFseElems[startMLen + stateMLen]);
+            const uint32_t packedFseElemLLen = srt.inFseElems[startLLen + stateLLen];
+            const uint32_t packedFseElemOffs = srt.inFseElems[startOffs + stateOffs];
+            const uint32_t packedFseElemMLen = srt.inFseElems[startMLen + stateMLen];
         #endif
 
         uint32_t llen = 0, offs = 0, mlen = 0;
