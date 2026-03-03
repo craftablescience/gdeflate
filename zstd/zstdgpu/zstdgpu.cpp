@@ -363,9 +363,11 @@ static void zstdgpu_ReCreate_SRTs(zstdgpu_SRTs & srts, ID3D12Device *device, con
     ZSTDGPU_KERNEL_SCOPE_X(ParseFrames_CountBlocks              , L"Parse Frames"               )   \
     ZSTDGPU_KERNEL_SCOPE_X(PrefixSum                            , L"Prefix Sums"                )
 
-#define ZSTDGPU_KERNEL_SCOPE_LIST_STAGE_1() \
+#define ZSTDGPU_KERNEL_SCOPE_LIST_STAGE_1_ALL_BLOCKS() \
     ZSTDGPU_KERNEL_SCOPE_X(InitResources                        , L"Init Resources"             )   \
-    ZSTDGPU_KERNEL_SCOPE_X(ParseFrames                          , L"Parse Frames"               )   \
+    ZSTDGPU_KERNEL_SCOPE_X(ParseFrames                          , L"Parse Frames"               )
+
+#define ZSTDGPU_KERNEL_SCOPE_LIST_STAGE_1_CMP_BLOCKS() \
     ZSTDGPU_KERNEL_SCOPE_X(ParseCompressedBlocks                , L"Parse Compressed Blocks"    )
 
 #define ZSTDGPU_KERNEL_SCOPE_LIST_STAGE_2_CMP_BLOCKS() \
@@ -391,7 +393,8 @@ static void zstdgpu_ReCreate_SRTs(zstdgpu_SRTs & srts, ID3D12Device *device, con
 
 #define ZSTDGPU_KERNEL_SCOPE_LIST()                     \
     ZSTDGPU_KERNEL_SCOPE_LIST_STAGE_0()                 \
-    ZSTDGPU_KERNEL_SCOPE_LIST_STAGE_1()                 \
+    ZSTDGPU_KERNEL_SCOPE_LIST_STAGE_1_ALL_BLOCKS()      \
+    ZSTDGPU_KERNEL_SCOPE_LIST_STAGE_1_CMP_BLOCKS()      \
     ZSTDGPU_KERNEL_SCOPE_LIST_STAGE_2_CMP_BLOCKS()      \
     ZSTDGPU_KERNEL_SCOPE_LIST_STAGE_2_RAW_RLE_BLOCKS()  \
     ZSTDGPU_KERNEL_SCOPE_LIST_STAGE_2_ALL_BLOCKS()
@@ -2070,7 +2073,11 @@ ZSTDGPU_API void zstdgpu_RetrieveTimestamps(const wchar_t **outTimestampScopeNam
     }
     else if (stageIndex == 1)
     {
-        timestampScopeCountPerStage += 0 ZSTDGPU_KERNEL_SCOPE_LIST_STAGE_1();
+        timestampScopeCountPerStage += 0 ZSTDGPU_KERNEL_SCOPE_LIST_STAGE_1_ALL_BLOCKS();
+        if (req->zstdCmpBlockCount > 0)
+        {
+            timestampScopeCountPerStage += 0 ZSTDGPU_KERNEL_SCOPE_LIST_STAGE_1_CMP_BLOCKS();
+        }
     }
     else if (stageIndex == 2)
     {
@@ -2099,7 +2106,11 @@ ZSTDGPU_API void zstdgpu_RetrieveTimestamps(const wchar_t **outTimestampScopeNam
         }
         else if (stageIndex == 1)
         {
-            ZSTDGPU_KERNEL_SCOPE_LIST_STAGE_1()
+            ZSTDGPU_KERNEL_SCOPE_LIST_STAGE_1_ALL_BLOCKS()
+            if (req->zstdCmpBlockCount > 0)
+            {
+                ZSTDGPU_KERNEL_SCOPE_LIST_STAGE_1_CMP_BLOCKS();
+            }
         }
         else if (stageIndex == 2)
         {
