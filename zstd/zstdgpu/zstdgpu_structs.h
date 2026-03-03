@@ -201,14 +201,6 @@
 #   endif
 #endif
 
-#ifndef ZSTDGPU_STATIC_CAST
-#   ifdef __hlsl_dx_compiler
-#       define ZSTDGPU_STATIC_CAST(type)
-#   else
-#       define ZSTDGPU_STATIC_CAST(type) (type)
-#   endif
-#endif
-
 // Opaque LDS address types: offset on HLSL, pointer on C++.
 // Using these instead of raw uint32_t / uint32_t* prevents accidental type
 // mismatches when storing intermediate LDS addresses in local variables.
