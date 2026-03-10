@@ -577,6 +577,7 @@ ZSTDGPU_ENUM(Status) zstdgpu_CreatePersistentContext(zstdgpu_PersistentContext *
 #else
         D3D12_FEATURE_DATA_D3D12_OPTIONS1 featureOptions1;
         D3D12AID_CHECK(device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS1, ZSTDGPU_WARN_DISABLE_MSVC(6001, &featureOptions1), sizeof(featureOptions1)));
+        ZSTDGPU_ASSERT(featureOptions1.Int64ShaderOps); // 64-bit integer shader ops required for Forward_BitBuffer
 
         const LUID luid = device->GetAdapterLuid();
 
@@ -907,6 +908,8 @@ ZSTDGPU_ENUM(Status) zstdgpu_GetGpuMemoryRequirement(uint32_t *outDefaultHeapByt
             req->zstdRawByteCount  = CNTRS(BlocksBytes_RAW);
             req->zstdRleByteCount  = CNTRS(BlocksBytes_RLE);
 
+            ZSTDGPU_ASSERT(0 != cntRaw + cntRle + cntCmp);
+
             zstdgpu_ResourceInfo_Stage_1_Init(&req->resInfo, cntRaw, cntRle, cntCmp);
 
         }
@@ -1074,6 +1077,8 @@ ZSTDGPU_ENUM(Status) zstdgpu_SubmitWithInteralMemory(zstdgpu_PerRequestContext r
             req->zstdCmpBlockCount = cntCmp;
             req->zstdRawByteCount = CNTRS(BlocksBytes_RAW);
             req->zstdRleByteCount = CNTRS(BlocksBytes_RLE);
+
+            ZSTDGPU_ASSERT(0 != cntRaw + cntRle + cntCmp);
 
             zstdgpu_ResourceInfo_Stage_1_Init(&req->resInfo, cntRaw, cntRle, cntCmp);
         }
