@@ -890,9 +890,10 @@ static inline void zstdgpu_Forward_BitBuffer_Skip(ZSTDGPU_PARAM_INOUT(zstdgpu_Fo
     ZSTDGPU_ASSERT(inoutBuffer.datasz >= zstdgpu_Forward_BitBuffer_GetByteOffset(inoutBuffer) + bytecnt);
 
 #if 1
-    if (inoutBuffer.bitcnt < (bytecnt << 3))
+    const uint32_t leftbytecnt = inoutBuffer.bitcnt >> 3;
+    ZSTDGPU_BRANCH if (leftbytecnt < bytecnt)
     {
-        bytecnt -= inoutBuffer.bitcnt >> 3;
+        bytecnt -= leftbytecnt;
         zstdgpu_Forward_BitBuffer_Pop(inoutBuffer, inoutBuffer.bitcnt);
 
         inoutBuffer.offset += bytecnt >> 2;
