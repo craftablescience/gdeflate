@@ -232,12 +232,20 @@ static void zstdgpu_Init_FinaliseSequenceOffsets_SRT(zstdgpu_FinaliseSequenceOff
 #define STRINGIZE(x) STRINGIZE2(x)
 #define STRINGIZE2(x) #x
 #define VALIDATE(name) \
+    do                  \
+    {                   \
     if (ZSTDGPU_ENUM_CONST(Validate_Success) != zstdgpu_ReferenceStore_Validate_##name) \
-        debugPrint(L"[FAIL] Validation of '"#name"' failed in function: " __FUNCTION__ ", file: " __FILE__ ", line: " STRINGIZE(__LINE__) "\n")
+            debugPrint(L"[FAIL] Validation of '"#name"' failed in function: " __FUNCTION__ ", file: " __FILE__ ", line: " STRINGIZE(__LINE__) "\n");\
+    }                   \
+    while(0)
 
 #define VALIDATE_CND(cnd) \
+    do                      \
+    {                       \
     if (!(cnd)) \
-        debugPrint(L"[FAIL] Validation of '"#cnd"' failed in function: " __FUNCTION__ ", file: " __FILE__ ", line: " STRINGIZE(__LINE__) "\n")
+            debugPrint(L"[FAIL] Validation of '"#cnd"' failed in function: " __FUNCTION__ ", file: " __FILE__ ", line: " STRINGIZE(__LINE__) "\n");\
+    }                       \
+    while(0)
 
 static void zstdgpu_Test_DecompressHuffmanWeights(zstdgpu_ResourceDataCpu & cpuRes, zstdgpu_ResourceDataCpu & gpuReadbackRes, uint32_t zstdDataBufferSize, bool chkGpu, bool simGpu)
 {
@@ -439,16 +447,33 @@ static void zstdgpu_Test_DecompressSequences(zstdgpu_ResourceDataCpu & cpuRes, z
 static void zstdgpu_Test_BlockPrefix(zstdgpu_ResourceDataCpu & cpuRes, zstdgpu_ResourceDataCpu & gpuReadbackRes)
 {
     /** these buffers could be zero if some block types don't exist */
+    const uint32_t refRleBlockCount = cpuRes.Counters[kzstdgpu_CounterIndex_Blocks_RLE];
+    const uint32_t refRawBlockCount = cpuRes.Counters[kzstdgpu_CounterIndex_Blocks_RAW];
+    const uint32_t refCmpBlockCount = cpuRes.Counters[kzstdgpu_CounterIndex_Blocks_CMP];
+    const uint32_t refAllBlockCount = refRleBlockCount
+                                    + refRawBlockCount
+                                    + refCmpBlockCount;
+
+    VALIDATE_CND(refRleBlockCount == gpuReadbackRes.Counters[kzstdgpu_CounterIndex_Blocks_RLE]);
+    VALIDATE_CND(refRawBlockCount == gpuReadbackRes.Counters[kzstdgpu_CounterIndex_Blocks_RAW]);
+    VALIDATE_CND(refCmpBlockCount == gpuReadbackRes.Counters[kzstdgpu_CounterIndex_Blocks_CMP]);
+
     if (NULL != cpuRes.GlobalBlockIndexPerCmpBlock)
-        VALIDATE_CND(0 == memcmp(cpuRes.GlobalBlockIndexPerCmpBlock, gpuReadbackRes.GlobalBlockIndexPerCmpBlock, sizeof(cpuRes.GlobalBlockIndexPerCmpBlock[0])));
+        VALIDATE_CND(0 == memcmp(cpuRes.GlobalBlockIndexPerCmpBlock, gpuReadbackRes.GlobalBlockIndexPerCmpBlock, sizeof(cpuRes.GlobalBlockIndexPerCmpBlock[0]) * refCmpBlockCount));
+    else
+        VALIDATE_CND(NULL == gpuReadbackRes.GlobalBlockIndexPerCmpBlock);
 
     if (NULL != cpuRes.GlobalBlockIndexPerRawBlock)
-        VALIDATE_CND(0 == memcmp(cpuRes.GlobalBlockIndexPerRawBlock, gpuReadbackRes.GlobalBlockIndexPerRawBlock, sizeof(cpuRes.GlobalBlockIndexPerRawBlock[0])));
+        VALIDATE_CND(0 == memcmp(cpuRes.GlobalBlockIndexPerRawBlock, gpuReadbackRes.GlobalBlockIndexPerRawBlock, sizeof(cpuRes.GlobalBlockIndexPerRawBlock[0]) * refRawBlockCount));
+    else
+        VALIDATE_CND(NULL == gpuReadbackRes.GlobalBlockIndexPerRawBlock);
 
     if (NULL != cpuRes.GlobalBlockIndexPerRleBlock)
-        VALIDATE_CND(0 == memcmp(cpuRes.GlobalBlockIndexPerRleBlock, gpuReadbackRes.GlobalBlockIndexPerRleBlock, sizeof(cpuRes.GlobalBlockIndexPerRleBlock[0])));
+        VALIDATE_CND(0 == memcmp(cpuRes.GlobalBlockIndexPerRleBlock, gpuReadbackRes.GlobalBlockIndexPerRleBlock, sizeof(cpuRes.GlobalBlockIndexPerRleBlock[0]) * refRleBlockCount));
+    else
+        VALIDATE_CND(NULL == gpuReadbackRes.GlobalBlockIndexPerRleBlock);
 
-    VALIDATE_CND(0 == memcmp(cpuRes.BlockSizePrefix, gpuReadbackRes.BlockSizePrefix, sizeof(cpuRes.BlockSizePrefix[0])));
+    VALIDATE_CND(0 == memcmp(cpuRes.BlockSizePrefix, gpuReadbackRes.BlockSizePrefix, sizeof(cpuRes.BlockSizePrefix[0]) * refAllBlockCount));
 }
 
 static uint32_t zstdgpu_Test_DecompressedDataPerBlockType(const uint32_t *gpuGlobalBlockIndex,
