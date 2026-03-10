@@ -1839,9 +1839,7 @@ void zstdgpu_SubmitStage2(zstdgpu_PerRequestContext req, ID3D12GraphicsCommandLi
     if (req->zstdCmpBlockCount > 0)
     {
         PIXBeginEvent(cmdList, PIX_COLOR_DEFAULT, L"[Decompress Sequences]");
-        d3d12aid_ComputeRsPs_Set(&req->DecompressSequences, cmdList);
-        cmdList->SetDescriptorHeaps(1, &req->srts.heap);
-        cmdList->SetComputeRootDescriptorTable(0, req->srts.DecompressSequencesGpuHandle);
+        BIND_RS_PS_SRT(DecompressSequences);
 
         const uint32_t tgCount = ZSTDGPU_TG_COUNT(req->zstdSeqStreamCount, 1); /** 1 - because we choose _LdsFseCache shader that process 1 stream per threadgroup */
         ZSTDGPU_KERNEL_SCOPE(DecompressSequences, cmdList,
