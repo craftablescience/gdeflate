@@ -1185,7 +1185,7 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE, _In_ LPWSTR lp
         }
     }
 
-    debugPrint(L"Initializing 'zstdgpu' Persistent Context.\n");
+    debugPrint(L"[INFO] Initializing 'zstdgpu' Persistent Context.\n");
     zstdgpu_PersistentContext persistentContext = NULL;
     {
         const uint32_t persistentMemorySize = zstdgpu_GetPersistentContextRequiredMemorySizeInBytes();
@@ -1193,7 +1193,7 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE, _In_ LPWSTR lp
         ZSTDGPU_ASSERT(ZSTDGPU_ENUM_CONST(StatusSuccess) == status);
     }
 
-    debugPrint(L"Initializing 'zstdgpu' PerRequest Context.\n");
+    debugPrint(L"[INFO] Initializing 'zstdgpu' PerRequest Context.\n");
     zstdgpu_PerRequestContext perRequestContext = NULL;
     {
         const uint32_t perRequestMemorySize = zstdgpu_GetPerRequestContextRequiredMemorySizeInBytes();
@@ -1521,7 +1521,7 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE, _In_ LPWSTR lp
                     {                                                                                           \
                         clks = d3d12aid_Timestamps_GetScopeDelta(&timestamps, kBackBufferIndex, name##_Stamp);  \
                         const uint64_t usec = (clks * 1000000) / freqGpuClocks;                                 \
-                        debugPrint(L"%u frame: %7llu us - '" #name "' \n", frameIndex, usec);                  \
+                        debugPrint(L"[PERF] %u frame: %7llu us - '" #name "' \n", frameIndex, usec);                  \
                     }
 
                 #define ZSTDGPU_DETAIL_TS(stage) \
@@ -1531,7 +1531,7 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE, _In_ LPWSTR lp
                         zstdgpu_RetrieveTimestamps(timestampScopeNames, timestampScopeClocks, &timestampScopeCount, perRequestContext, stage);                      \
                         for (uint32_t i = 0; i < timestampScopeCount; ++i)                                                                                          \
                         {                                                                                                                                           \
-                            debugPrint(L"%u frame: \t%7llu us - 'Stage"#stage" :: %s'\n", frameIndex,  (timestampScopeClocks[i] * 1000000) / freqGpuClocks, timestampScopeNames[i]);  \
+                            debugPrint(L"[PERF] %u frame: \t%7llu us - 'Stage"#stage" :: %s'\n", frameIndex,  (timestampScopeClocks[i] * 1000000) / freqGpuClocks, timestampScopeNames[i]);  \
                         }                                                                                                                                           \
                     }
                     ZSTDGPU_TS(Stage0)
@@ -1547,7 +1547,7 @@ int WINAPI wWinMain(_In_ HINSTANCE hInstance, _In_opt_ HINSTANCE, _In_ LPWSTR lp
                         clks = d3d12aid_Timestamps_GetDelta(&timestamps, kBackBufferIndex, Stage0_Stamp, Stage2_Stamp + 1);
                         const uint64_t ns = (clks * 1000000000) / freqGpuClocks;
                         const double decompressionThroughput = (double)zstdUnCompressedFramesMemorySizeInBytes / ns;
-                        debugPrint(L"%u frame: Decompression throughput %lf (GB/s)\n", frameIndex, decompressionThroughput);
+                        debugPrint(L"[PERF] %u frame: Decompression throughput %lf (GB/s)\n", frameIndex, decompressionThroughput);
                     }
                 #undef ZSTDGPU_DETAIL_TS
                 #undef ZSTDGPU_TS
