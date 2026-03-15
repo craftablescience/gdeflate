@@ -39,15 +39,15 @@ struct TileStream
 
     uint16_t numTiles;
 
-    uint32_t tileSizeIdx : 2; // this must be set to 1
+    uint32_t tileSizeIdx : 2;
     uint32_t lastTileSize : 18;
     uint32_t reserved1 : 12;
 
-    explicit TileStream(size_t uncompressedSize)
+    explicit TileStream(size_t uncompressedSize, uint8_t inTileSizeIdx = 1)
             : id(0)
             , magic(0)
             , numTiles(0)
-            , tileSizeIdx(1)
+            , tileSizeIdx(inTileSizeIdx)
             , lastTileSize(0)
             , reserved1(0)
     {
@@ -60,12 +60,17 @@ struct TileStream
         return id == (magic ^ 0xff);
     }
 
-    [[nodiscard]] size_t GetUncompressedSize() const
+    [[nodiscard]] size_t GetTileSize() const
     {
-        return numTiles * kDefaultTileSize - (lastTileSize == 0 ? 0 : kDefaultTileSize - lastTileSize);
+        return 1 << (15 + tileSizeIdx);
     }
 
-private:
+    [[nodiscard]] size_t GetUncompressedSize() const
+    {
+        const size_t tileSize = GetTileSize();
+        return numTiles * tileSize - (lastTileSize == 0 ? 0 : tileSize - lastTileSize);
+    }
+
     void SetCodecId(uint8_t inId)
     {
         id = inId;
@@ -74,8 +79,9 @@ private:
 
     void SetUncompressedSize(size_t size)
     {
-        numTiles = static_cast<uint16_t>(size / kDefaultTileSize);
-        lastTileSize = static_cast<uint32_t>(size - numTiles * kDefaultTileSize);
+        const size_t tileSize = GetTileSize();
+        numTiles = static_cast<uint16_t>(size / tileSize);
+        lastTileSize = static_cast<uint32_t>(size - numTiles * tileSize);
 
         numTiles += lastTileSize != 0 ? 1 : 0;
     }

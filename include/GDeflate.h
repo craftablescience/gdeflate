@@ -42,6 +42,6 @@ bool Compress(
     uint32_t level,
     uint32_t flags);
 
-bool Decompress(uint8_t* output, size_t outputSize, const uint8_t* in, size_t inSize, uint32_t numWorkers);
+bool Decompress(uint8_t* output, size_t outputSize, const uint8_t* in, size_t inSize, uint32_t numWorkers, bool calculateTileCount = true);
 
 } // namespace GDeflate

@@ -111,7 +111,7 @@ static void TileDecompressionJob(DecompressionContext& context, uint32_t compres
     }
 }
 
-bool Decompress(uint8_t* output, size_t outputSize, const uint8_t* in, size_t inSize, uint32_t numWorkers)
+bool Decompress(uint8_t* output, size_t outputSize, const uint8_t* in, size_t inSize, uint32_t numWorkers, bool calculateTileCount)
 {
     if (nullptr == output || nullptr == in || 0 == outputSize || 0 == inSize)
         return false;
@@ -119,9 +119,11 @@ bool Decompress(uint8_t* output, size_t outputSize, const uint8_t* in, size_t in
     numWorkers = std::min(kMaxWorkers, numWorkers);
     numWorkers = std::max(1u, numWorkers);
 
-    auto header = reinterpret_cast<const TileStream*>(in);
+    auto header = *reinterpret_cast<const TileStream*>(in);
+    if (calculateTileCount)
+        header.SetUncompressedSize(outputSize * 2); // ???
 
-    if (!ValidateStream(header))
+    if (!ValidateStream(&header))
         return false;
 
     // Run a tile per thread
@@ -133,15 +135,15 @@ bool Decompress(uint8_t* output, size_t outputSize, const uint8_t* in, size_t in
     context.inputSize = inSize;
 
     context.outputPtr = output;
-    context.outputSize = header->GetUncompressedSize();
+    context.outputSize = header.GetUncompressedSize();
 
     context.globalIndex = 0;
-    context.numItems = header->numTiles;
+    context.numItems = header.numTiles;
 
     context.failed = false;
 
     uint32_t numWorkersLeft = context.numItems > (2 * numWorkers) ? numWorkers : 1;
-    const uint32_t compressorId = header->id;
+    const uint32_t compressorId = header.id;
 
     for (auto& worker : workers)
     {
